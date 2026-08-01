@@ -8,10 +8,10 @@ import random as random_module
 import sys
 from pathlib import Path
 
-from livewall import engine as engine_mod
+from livewall import engine
 from livewall.config import Config
 from livewall.database import Wallpaper
-from livewall.engine import MpvpaperNotFoundError, WallpaperEngine
+from livewall.engine import ApplyError, CaelestiaNotAvailableError
 from livewall.library import (
     DuplicateWallpaperError,
     ImportResult,
@@ -74,10 +74,7 @@ def cmd_add(args: argparse.Namespace, lib: Library) -> int:
     return 0
 
 
-def cmd_import(args: argparse.Namespace, lib: Library) -> int:
-    result: ImportResult = lib.import_folder(
-        Path(args.folder), recursive=not args.no_recursive, tags=_split_tags(args.tags)
-    )
+def _print_import_result(result: ImportResult) -> None:
     print(f"Added: {len(result.added)}")
     print(f"Skipped duplicates: {len(result.duplicates)}")
     print(f"Skipped unsupported: {len(result.unsupported)}")
@@ -85,6 +82,32 @@ def cmd_import(args: argparse.Namespace, lib: Library) -> int:
         print(f"Errors: {len(result.errors)}")
         for path, message in result.errors:
             print(f"  {path}: {message}", file=sys.stderr)
+
+
+def cmd_import(args: argparse.Namespace, lib: Library) -> int:
+    result = lib.import_folder(
+        Path(args.folder), recursive=not args.no_recursive, tags=_split_tags(args.tags)
+    )
+    _print_import_result(result)
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace, lib: Library) -> int:
+    from livewall.library import CAELESTIA_WALLPAPERS_DIR
+
+    print(f"Syncing from {CAELESTIA_WALLPAPERS_DIR} ...")
+    result = lib.sync_from_wallpapers_dir()
+    _print_import_result(result)
+    return 0
+
+
+def cmd_refresh_thumbs(args: argparse.Namespace) -> int:
+    try:
+        engine.refresh_thumbnails()
+    except (CaelestiaNotAvailableError, ApplyError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print("Refreshed caelestia-aw's video thumbnail cache.")
     return 0
 
 
@@ -148,62 +171,60 @@ def cmd_info(args: argparse.Namespace, lib: Library) -> int:
     return 0
 
 
-def _apply_wallpaper(wallpaper: Wallpaper, engine: WallpaperEngine, monitor: str | None) -> int:
+def _apply_wallpaper(wallpaper: Wallpaper, no_smart: bool) -> int:
     try:
-        engine.apply(wallpaper, monitor=monitor)
-    except MpvpaperNotFoundError:
-        print(
-            "mpvpaper is not installed. Run 'livewall install mpvpaper' first.",
-            file=sys.stderr,
-        )
+        engine.apply(wallpaper, no_smart=no_smart)
+    except CaelestiaNotAvailableError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ApplyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     print(f"Applied '{wallpaper.name}'")
     return 0
 
 
-def cmd_apply(args: argparse.Namespace, lib: Library, engine: WallpaperEngine) -> int:
+def cmd_apply(args: argparse.Namespace, lib: Library, config: Config) -> int:
     try:
         wallpaper = lib.get(args.name)
     except WallpaperNotFoundError:
         print(f"No such wallpaper: '{args.name}'", file=sys.stderr)
         return 1
-    return _apply_wallpaper(wallpaper, engine, args.monitor)
+    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours)
 
 
-def cmd_random(args: argparse.Namespace, lib: Library, engine: WallpaperEngine) -> int:
-    candidates = lib.search(
-        tags=_split_tags(args.tag) or None,
-        favorites_only=args.favorites,
-    )
-    candidates = [w for w in candidates if w.name != engine.state.current_wallpaper] or candidates
+def cmd_random(args: argparse.Namespace, lib: Library, config: Config) -> int:
+    tags = _split_tags(args.tag) or config.random_tags or None
+    favorites_only = args.favorites or config.random_favorites_only
+    candidates = lib.search(tags=tags, favorites_only=favorites_only)
     if not candidates:
-        print("No wallpapers in library.", file=sys.stderr)
+        print("No wallpapers match.", file=sys.stderr)
         return 1
+
+    current = engine.current_path()
+    if current is not None and len(candidates) > 1:
+        candidates = [w for w in candidates if w.file_path != current] or candidates
+
     wallpaper = random_module.choice(candidates)
-    return _apply_wallpaper(wallpaper, engine, args.monitor)
+    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours)
 
 
-def cmd_stop(args: argparse.Namespace, lib: Library, engine: WallpaperEngine) -> int:
-    engine.stop()
-    print("Stopped.")
-    return 0
-
-
-def cmd_status(args: argparse.Namespace, lib: Library, engine: WallpaperEngine) -> int:
-    if not engine.state.processes:
-        print("No wallpaper is currently applied by LiveWall.")
+def cmd_status(args: argparse.Namespace, lib: Library) -> int:
+    current = engine.current_path()
+    if current is None:
+        print("No wallpaper is currently applied (or caelestia's state file is unreadable).")
         return 0
-    print(f"Current: {engine.state.current_wallpaper}")
-    for monitor, pid in engine.state.processes.items():
-        alive = "running" if engine.is_running(monitor) else "dead"
-        print(f"  {monitor}: pid {pid} ({alive})")
+    print(f"Current: {current}")
+    for wallpaper in lib.all():
+        if wallpaper.file_path == current:
+            print(f"  In library as '{wallpaper.name}' (tags: {', '.join(wallpaper.tags) or 'none'})")
+            break
+    else:
+        print("  (not in the LiveWall library)")
     return 0
 
 
-def cmd_preview(args: argparse.Namespace, lib: Library, engine: WallpaperEngine) -> int:
+def cmd_preview(args: argparse.Namespace, lib: Library) -> int:
     try:
         wallpaper = lib.get(args.name)
     except WallpaperNotFoundError:
@@ -211,22 +232,10 @@ def cmd_preview(args: argparse.Namespace, lib: Library, engine: WallpaperEngine)
         return 1
     try:
         engine.preview(wallpaper.file_path, blocking=True)
-    except MpvpaperNotFoundError as exc:
+    except CaelestiaNotAvailableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     return 0
-
-
-def cmd_install_mpvpaper(args: argparse.Namespace) -> int:
-    if engine_mod.is_installed():
-        print("mpvpaper is already installed.")
-        return 0
-    cmd = " ".join(engine_mod.install_command())
-    reply = input(f"mpvpaper is not installed. Run '{cmd}' now? [y/N] ").strip().lower()
-    if reply != "y":
-        print("Skipped.")
-        return 1
-    return 0 if engine_mod.install() else 1
 
 
 def cmd_picker(args: argparse.Namespace) -> int:
@@ -264,6 +273,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_import.add_argument("--no-recursive", action="store_true")
     p_import.add_argument("--tags", help="Comma-separated tags applied to every import")
 
+    sub.add_parser("sync", help="Import everything under caelestia-aw's wallpapers directory")
+
+    sub.add_parser("refresh-thumbs", help="Refresh caelestia-aw's own video thumbnail cache")
+
     p_remove = sub.add_parser("remove", help="Remove a wallpaper from the library")
     p_remove.add_argument("name")
 
@@ -282,27 +295,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_info = sub.add_parser("info", help="Show details for a wallpaper")
     p_info.add_argument("name")
 
-    p_apply = sub.add_parser("apply", help="Apply a wallpaper as the live background")
+    p_apply = sub.add_parser("apply", help="Apply a wallpaper via caelestia-aw")
     p_apply.add_argument("name")
-    p_apply.add_argument("--monitor")
+    p_apply.add_argument("--no-smart", action="store_true", help="Skip Material You recolouring")
 
     p_random = sub.add_parser("random", help="Apply a random wallpaper")
     p_random.add_argument("--tag")
     p_random.add_argument("--favorites", action="store_true")
-    p_random.add_argument("--monitor")
+    p_random.add_argument("--no-smart", action="store_true")
 
-    sub.add_parser("stop", help="Stop the running wallpaper")
-    sub.add_parser("status", help="Show what's currently applied")
+    sub.add_parser("status", help="Show what caelestia-aw currently has applied")
 
     p_preview = sub.add_parser("preview", help="Preview a wallpaper in a normal mpv window")
     p_preview.add_argument("name")
 
     sub.add_parser("picker", help="Open the quick wallpaper picker")
     sub.add_parser("gui", help="Open the LiveWall library browser")
-
-    p_install = sub.add_parser("install", help="Install optional integrations")
-    install_sub = p_install.add_subparsers(dest="install_target", required=True)
-    install_sub.add_parser("mpvpaper", help="Install mpvpaper via pacman")
 
     return parser
 
@@ -316,34 +324,33 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_picker(args)
     if args.command == "gui":
         return cmd_gui(args)
-    if args.command == "install" and args.install_target == "mpvpaper":
-        return cmd_install_mpvpaper(args)
+    if args.command == "refresh-thumbs":
+        return cmd_refresh_thumbs(args)
 
     lib = Library()
     config = Config.load()
-    engine = WallpaperEngine(config)
 
-    dispatch_with_engine = {
+    dispatch_with_config = {
         "apply": cmd_apply,
         "random": cmd_random,
-        "stop": cmd_stop,
-        "status": cmd_status,
-        "preview": cmd_preview,
     }
     dispatch_lib_only = {
         "list": cmd_list,
         "add": cmd_add,
         "import": cmd_import,
+        "sync": cmd_sync,
         "remove": cmd_remove,
         "rename": cmd_rename,
         "favorite": cmd_favorite,
         "tag": cmd_tag,
         "info": cmd_info,
+        "status": cmd_status,
+        "preview": cmd_preview,
     }
 
     try:
-        if args.command in dispatch_with_engine:
-            return dispatch_with_engine[args.command](args, lib, engine)
+        if args.command in dispatch_with_config:
+            return dispatch_with_config[args.command](args, lib, config)
         if args.command in dispatch_lib_only:
             return dispatch_lib_only[args.command](args, lib)
     except LiveWallError as exc:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,6 +19,11 @@ from livewall.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Same directory caelestia-aw itself scans for wallpapers (utils/paths.py:wallpapers_dir).
+CAELESTIA_WALLPAPERS_DIR = Path(
+    os.getenv("CAELESTIA_WALLPAPERS_DIR", Path.home() / "Pictures" / "Wallpapers")
+)
 
 
 class LiveWallError(Exception):
@@ -150,6 +156,10 @@ class Library:
             except LiveWallError as exc:
                 result.errors.append((candidate, str(exc)))
         return result
+
+    def sync_from_wallpapers_dir(self) -> ImportResult:
+        """Import everything already under caelestia-aw's own wallpapers directory."""
+        return self.import_folder(CAELESTIA_WALLPAPERS_DIR, recursive=True)
 
     def remove(self, name: str) -> Wallpaper:
         wallpaper = self.db.remove(name)

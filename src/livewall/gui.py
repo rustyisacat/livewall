@@ -21,10 +21,10 @@ from textual.widgets import (
     Switch,
 )
 
+from livewall import engine
 from livewall.config import Config, RANDOM_INTERVAL_SECONDS
 from livewall.database import Wallpaper
-from livewall.engine import MpvpaperNotFoundError, WallpaperEngine
-from livewall.hypr import list_monitors
+from livewall.engine import ApplyError, CaelestiaNotAvailableError
 from livewall.library import Library, LiveWallError, WallpaperInfo
 from livewall.utils import setup_logging
 
@@ -134,9 +134,11 @@ class SettingsScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="settings-box"):
-            with Horizontal(classes="settings-row"):
-                yield Label("Autostart")
-                yield Switch(value=self.config.autostart, id="autostart")
+            yield Static(
+                "[dim]Rendering, theming, HW decode, and pause-on-battery/fullscreen "
+                "are configured in Caelestia's own Nexus settings — LiveWall only "
+                "controls what it adds on top.[/dim]"
+            )
             with Horizontal(classes="settings-row"):
                 yield Label("Random interval")
                 yield Select(
@@ -145,29 +147,14 @@ class SettingsScreen(Screen):
                     id="random_interval",
                 )
             with Horizontal(classes="settings-row"):
-                yield Label("Monitor")
-                monitors = list_monitors()
-                options = [("All (*)", "*")] + [(m, m) for m in monitors]
-                current = self.config.monitors[0] if self.config.monitors else "*"
-                if current not in [v for _, v in options]:
-                    options.append((current, current))
-                yield Select(options, value=current, id="monitor")
+                yield Label("Random: favorites only")
+                yield Switch(value=self.config.random_favorites_only, id="random_favorites_only")
             with Horizontal(classes="settings-row"):
-                yield Label("Scaling")
-                yield Select(
-                    [("Fit", "fit"), ("Fill", "fill"), ("Stretch", "stretch")],
-                    value=self.config.scaling,
-                    id="scaling",
-                )
+                yield Label("Random: tags")
+                yield Input(value=", ".join(self.config.random_tags), id="random_tags")
             with Horizontal(classes="settings-row"):
-                yield Label("Mute audio")
-                yield Switch(value=self.config.mute, id="mute")
-            with Horizontal(classes="settings-row"):
-                yield Label("Loop")
-                yield Switch(value=self.config.loop, id="loop")
-            with Horizontal(classes="settings-row"):
-                yield Label("Hardware decoding")
-                yield Switch(value=self.config.hwdec, id="hwdec")
+                yield Label("Skip Material You recolour")
+                yield Switch(value=self.config.no_smart_colours, id="no_smart_colours")
             with Horizontal(classes="settings-row"):
                 yield Button("Save", id="save", variant="primary")
                 yield Button("Cancel", id="cancel")
@@ -175,13 +162,11 @@ class SettingsScreen(Screen):
 
     @on(Button.Pressed, "#save")
     def save(self) -> None:
-        self.config.autostart = self.query_one("#autostart", Switch).value
         self.config.random_interval = self.query_one("#random_interval", Select).value
-        self.config.monitors = [self.query_one("#monitor", Select).value]
-        self.config.scaling = self.query_one("#scaling", Select).value
-        self.config.mute = self.query_one("#mute", Switch).value
-        self.config.loop = self.query_one("#loop", Switch).value
-        self.config.hwdec = self.query_one("#hwdec", Switch).value
+        self.config.random_favorites_only = self.query_one("#random_favorites_only", Switch).value
+        raw_tags = self.query_one("#random_tags", Input).value
+        self.config.random_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        self.config.no_smart_colours = self.query_one("#no_smart_colours", Switch).value
         self.config.save()
         self.notify("Settings saved")
         self.app.pop_screen()
@@ -274,10 +259,10 @@ class LibraryScreen(Screen):
     LibraryScreen #search { dock: top; }
     """
 
-    def __init__(self, library: Library, engine: WallpaperEngine) -> None:
+    def __init__(self, library: Library, config: Config) -> None:
         super().__init__()
         self.library = library
-        self.engine = engine
+        self.config = config
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -324,11 +309,11 @@ class LibraryScreen(Screen):
         if not name:
             return
         try:
-            self.engine.apply(self.library.get(name))
-        except MpvpaperNotFoundError:
-            self.notify("mpvpaper is not installed", severity="error")
+            engine.apply(self.library.get(name), no_smart=self.config.no_smart_colours)
+        except CaelestiaNotAvailableError:
+            self.notify("caelestia is not installed", severity="error")
             return
-        except (FileNotFoundError, LiveWallError) as exc:
+        except (FileNotFoundError, ApplyError, LiveWallError) as exc:
             self.notify(str(exc), severity="error")
             return
         self.notify(f"Applied '{name}'")
@@ -347,8 +332,8 @@ class LibraryScreen(Screen):
             return
         wallpaper = self.library.get(name)
         try:
-            self.engine.preview(wallpaper.file_path, blocking=False)
-        except MpvpaperNotFoundError:
+            engine.preview(wallpaper.file_path, blocking=False)
+        except CaelestiaNotAvailableError:
             self.notify("mpv is not installed", severity="error")
             return
         self.notify(f"Previewing '{name}' in mpv")
@@ -434,10 +419,9 @@ class LiveWallApp(App):
         super().__init__()
         self.library = Library()
         self.config = Config.load()
-        self.engine = WallpaperEngine(self.config)
 
     def on_mount(self) -> None:
-        self.push_screen(LibraryScreen(self.library, self.engine))
+        self.push_screen(LibraryScreen(self.library, self.config))
 
 
 def run() -> None:

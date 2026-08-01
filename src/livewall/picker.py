@@ -10,8 +10,9 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Input, ListView
 
+from livewall import engine
 from livewall.config import Config
-from livewall.engine import MpvpaperNotFoundError, WallpaperEngine
+from livewall.engine import ApplyError, CaelestiaNotAvailableError
 from livewall.gui import WallpaperItem
 from livewall.library import Library, LiveWallError
 from livewall.utils import setup_logging
@@ -41,7 +42,6 @@ class PickerApp(App):
         super().__init__()
         self.library = Library()
         self.config = Config.load()
-        self.engine = WallpaperEngine(self.config)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="picker-box"):
@@ -83,8 +83,8 @@ class PickerApp(App):
             self.exit()
             return
         try:
-            self.engine.apply(self.library.get(item.wallpaper_name))
-        except (MpvpaperNotFoundError, FileNotFoundError, LiveWallError) as exc:
+            engine.apply(self.library.get(item.wallpaper_name), no_smart=self.config.no_smart_colours)
+        except (CaelestiaNotAvailableError, FileNotFoundError, ApplyError, LiveWallError) as exc:
             logger.error("Failed to apply wallpaper: %s", exc)
         self.exit()
 
