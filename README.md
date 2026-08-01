@@ -57,6 +57,7 @@ livewall random [--tag t] [--favorites] [--no-smart]
 livewall status                      # what caelestia-aw currently has applied
 livewall preview NAME                # opens in a plain mpv window, not the desktop
 livewall refresh-thumbs              # regenerate caelestia-aw's own video thumbnail cache
+livewall restart-shell               # restart the Caelestia shell (see "Known caelestia-aw issues")
 livewall picker                      # the quick picker (see below)
 livewall gui                         # the full library browser (see below)
 livewall install hyprland            # add the Super+Shift+B picker keybind (opt-in, confirms first)
@@ -114,3 +115,21 @@ No giant single file — each module owns one concern:
 LiveWall never moves or copies your wallpaper files — the library just
 stores paths into wherever they already live (by default,
 `~/Pictures/Wallpapers`, same as caelestia-aw).
+
+## Known caelestia-aw issues LiveWall works around
+
+- **Wallpapers frozen on their first frame.** caelestia-aw's `WallpaperPauser`
+  (its pause-on-battery / pause-behind-windows feature) occasionally fails to
+  initialize its settings backend on shell startup (`Failed to initialize
+  QSettings instance` in `caelestia shell -l`), silently pinning
+  "pause behind windows" to on regardless of what you've set in Nexus
+  settings — which freezes all video wallpapers. Run `livewall restart-shell`
+  to force a clean re-init; `livewall gui`/`livewall picker` will still
+  *apply* correctly even while this is happening, they just won't visibly
+  animate until the shell is restarted.
+- **`.gif` files never animate**, independent of the above — caelestia-aw
+  only plays real video containers (`.mp4`/`.webm`/`.mkv`) via QtMultimedia;
+  `.gif` always renders as a static first frame (both its Python CLI's
+  `is_video()` and QML's `Wallpapers.isVideo()` exclude it). If your library
+  has both formats of the same wallpaper, `livewall random` and the picker
+  both prefer the non-`.gif` copy automatically for this reason.
