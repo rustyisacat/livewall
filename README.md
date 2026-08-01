@@ -65,6 +65,9 @@ livewall install systemd --interval 15m|30m|1h   # scheduled random rotation (op
 livewall uninstall systemd           # stop and remove the random-rotation timer
 livewall install sync-timer [--hours N]   # periodic 'livewall sync' (default 2h, opt-in, confirms first)
 livewall uninstall sync-timer        # stop and remove the periodic sync timer
+livewall install battery-saver [--low 15] [--high 25] [--check-seconds 60]  # opt-in, confirms first
+livewall uninstall battery-saver     # stop and remove the battery saver timer
+livewall battery-check               # run one battery-saver check immediately
 ```
 
 ### GUI (`livewall gui`)
@@ -109,7 +112,8 @@ No giant single file — each module owns one concern:
 | `library.py` | add/remove/rename/import/search/tag/favorite/dedupe, on top of `database.py` + `thumbnail.py` |
 | `engine.py` | thin wrapper around `caelestia wallpaper -f/--extract-thumbs` and its state file — LiveWall never renders anything itself |
 | `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
-| `systemd.py` | opt-in systemd `--user` timer for random rotation |
+| `systemd.py` | opt-in systemd `--user` timers: random rotation, periodic sync, battery saver |
+| `battery.py` | battery-percentage wallpaper saver logic (see below) |
 | `cli.py` | argparse entry point (`livewall ...`) |
 | `gui.py` | Textual library browser |
 | `picker.py` | Textual quick picker |
@@ -123,6 +127,21 @@ No giant single file — each module owns one concern:
 LiveWall never moves or copies your wallpaper files — the library just
 stores paths into wherever they already live (by default,
 `~/Pictures/Wallpapers`, same as caelestia-aw).
+
+## Battery saver
+
+caelestia-aw's own `WallpaperPauser` only knows "on AC or not" — no
+percentage threshold — and exposes no pause/resume IPC for wallpapers at all
+(`caelestia shell -s` shows `target wallpaper` has only `list/set/get`).
+So "pausing" isn't literally possible from the outside; what LiveWall does
+instead, and what actually addresses the battery cost, is switch to a static
+frame of the current wallpaper once battery drops to your low threshold
+(video decode is the expensive part — a still image is nearly free), and
+switch back to the real video once it recovers to your high threshold.
+Hysteresis between the two thresholds (default 15% / 25%) stops it from
+flapping back and forth right at one cutoff. It's driven purely by battery
+percentage, not charging state — install it with `livewall install
+battery-saver`, check-run it manually any time with `livewall battery-check`.
 
 ## Known caelestia-aw issues LiveWall works around
 

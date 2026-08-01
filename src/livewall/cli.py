@@ -374,6 +374,55 @@ def cmd_uninstall_sync_timer(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_battery_check(args: argparse.Namespace, config: Config) -> int:
+    from livewall import battery
+
+    result = battery.check(low=config.battery_saver_low, high=config.battery_saver_high)
+    print(result)
+    return 0
+
+
+def cmd_install_battery_saver(args: argparse.Namespace, config: Config) -> int:
+    from livewall import systemd
+
+    low = args.low if args.low is not None else config.battery_saver_low
+    high = args.high if args.high is not None else config.battery_saver_high
+    if low >= high:
+        print(f"Error: low ({low}) must be less than high ({high})", file=sys.stderr)
+        return 1
+
+    print(
+        f"This will install a systemd --user timer that checks battery level every "
+        f"{args.check_seconds}s, switching to a static frame at <= {low}% and back to "
+        f"video at >= {high}%:"
+    )
+    print(f"\n  {systemd.BATTERY_SERVICE_FILE}\n{systemd.render_battery_service()}")
+    print(f"  {systemd.BATTERY_TIMER_FILE}\n{systemd.render_battery_timer(args.check_seconds)}")
+    reply = input("Install and enable it now? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    config.battery_saver_low = low
+    config.battery_saver_high = high
+    config.save()
+    systemd.install_battery_saver(args.check_seconds)
+    print(f"Installed and started {systemd.BATTERY_TIMER_NAME}.")
+    return 0
+
+
+def cmd_uninstall_battery_saver(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    if not systemd.is_battery_saver_installed():
+        print("No battery saver timer is installed.")
+        return 0
+
+    systemd.uninstall_battery_saver()
+    print(f"Stopped and removed {systemd.BATTERY_TIMER_NAME}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -449,11 +498,23 @@ def build_parser() -> argparse.ArgumentParser:
         "sync-timer", help="Install a timer that periodically runs 'livewall sync'"
     )
     p_install_sync.add_argument("--hours", type=float, default=2.0, help="Interval in hours (default: 2)")
+    p_install_battery = install_sub.add_parser(
+        "battery-saver",
+        help="Switch to a static frame at low battery, resume video once recovered",
+    )
+    p_install_battery.add_argument("--low", type=int, help="Switch to static at or below this %% (default: 15)")
+    p_install_battery.add_argument("--high", type=int, help="Resume video at or above this %% (default: 25)")
+    p_install_battery.add_argument(
+        "--check-seconds", type=int, default=60, help="How often to check battery level (default: 60)"
+    )
 
     p_uninstall = sub.add_parser("uninstall", help="Remove optional integrations")
     uninstall_sub = p_uninstall.add_subparsers(dest="uninstall_target", required=True)
     uninstall_sub.add_parser("systemd", help="Stop and remove the random-rotation timer")
     uninstall_sub.add_parser("sync-timer", help="Stop and remove the periodic sync timer")
+    uninstall_sub.add_parser("battery-saver", help="Stop and remove the battery saver timer")
+
+    sub.add_parser("battery-check", help="Run one battery-saver check now")
 
     return parser
 
@@ -485,6 +546,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_install_systemd(args, config)
     if args.command == "uninstall" and args.uninstall_target == "systemd":
         return cmd_uninstall_systemd(args, config)
+    if args.command == "install" and args.install_target == "battery-saver":
+        return cmd_install_battery_saver(args, config)
+    if args.command == "uninstall" and args.uninstall_target == "battery-saver":
+        return cmd_uninstall_battery_saver(args)
+    if args.command == "battery-check":
+        return cmd_battery_check(args, config)
 
     dispatch_with_config = {
         "apply": cmd_apply,

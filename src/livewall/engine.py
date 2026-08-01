@@ -28,6 +28,7 @@ APPLY_TIMEOUT = 30
 
 _state_dir = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state"))
 CURRENT_WALLPAPER_STATE = _state_dir / "caelestia" / "wallpaper" / "path.txt"
+CURRENT_WALLPAPER_THUMBNAIL = CURRENT_WALLPAPER_STATE.parent / "thumbnail.jpg"
 
 
 class CaelestiaNotAvailableError(RuntimeError):
@@ -65,11 +66,11 @@ def current_path() -> Path | None:
     return Path(text) if text else None
 
 
-def apply(wallpaper: Wallpaper, no_smart: bool = False) -> None:
+def apply_path(path: Path, no_smart: bool = False) -> None:
+    """Apply any file (video or image) by path — not just a library entry."""
     if not is_available():
         raise CaelestiaNotAvailableError("'caelestia' is not on PATH")
 
-    path = wallpaper.file_path
     if not path.exists():
         raise FileNotFoundError(f"Wallpaper file missing: {path}")
 
@@ -86,6 +87,10 @@ def apply(wallpaper: Wallpaper, no_smart: bool = False) -> None:
         raise ApplyError(exc.stderr.strip() or f"caelestia exited {exc.returncode}") from exc
     except subprocess.TimeoutExpired as exc:
         raise ApplyError("caelestia wallpaper timed out") from exc
+
+
+def apply(wallpaper: Wallpaper, no_smart: bool = False) -> None:
+    apply_path(wallpaper.file_path, no_smart=no_smart)
 
 
 def refresh_thumbnails() -> None:

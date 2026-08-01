@@ -48,6 +48,8 @@ class Config:
     random_favorites_only: bool = False
     random_tags: list[str] = field(default_factory=list)
     no_smart_colours: bool = False
+    battery_saver_low: int = 15
+    battery_saver_high: int = 25
 
     @classmethod
     def load(cls) -> "Config":
