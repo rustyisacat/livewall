@@ -252,6 +252,35 @@ def cmd_gui(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_hyprland(args: argparse.Namespace) -> int:
+    from livewall import hypr
+
+    if hypr.is_installed():
+        print("Hyprland integration is already installed.")
+        return 0
+
+    print("This will edit the following files (each gets a one-time .livewall.bak copy):")
+    for path, snippet in hypr.snippets().items():
+        print(f"\n  {path}\n    {snippet}")
+    print()
+    reply = input("Apply these changes? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    result = hypr.install()
+    for path in result.changed:
+        print(f"Updated {path}")
+    for path in result.already_installed:
+        print(f"Already present in {path}, left unchanged")
+    for path in result.missing_anchor:
+        print(f"Could not find the expected anchor text in {path} — skipped", file=sys.stderr)
+    if result.missing_anchor:
+        return 1
+    print("\nReload Hyprland config (hyprctl reload) or restart to pick up the new keybind.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -312,6 +341,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("picker", help="Open the quick wallpaper picker")
     sub.add_parser("gui", help="Open the LiveWall library browser")
 
+    p_install = sub.add_parser("install", help="Install optional integrations")
+    install_sub = p_install.add_subparsers(dest="install_target", required=True)
+    install_sub.add_parser("hyprland", help="Add the Super+Shift+B picker keybind")
+
     return parser
 
 
@@ -326,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_gui(args)
     if args.command == "refresh-thumbs":
         return cmd_refresh_thumbs(args)
+    if args.command == "install" and args.install_target == "hyprland":
+        return cmd_install_hyprland(args)
 
     lib = Library()
     config = Config.load()
