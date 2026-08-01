@@ -345,6 +345,35 @@ def cmd_uninstall_systemd(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_install_sync_timer(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    hours = args.hours
+    print(f"This will install a systemd --user timer that runs 'livewall sync' every {hours}h:")
+    print(f"\n  {systemd.SYNC_SERVICE_FILE}\n{systemd.render_sync_service()}")
+    print(f"  {systemd.SYNC_TIMER_FILE}\n{systemd.render_sync_timer(hours)}")
+    reply = input("Install and enable it now? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    systemd.install_sync(hours)
+    print(f"Installed and started {systemd.SYNC_TIMER_NAME}.")
+    return 0
+
+
+def cmd_uninstall_sync_timer(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    if not systemd.is_sync_installed():
+        print("No sync timer is installed.")
+        return 0
+
+    systemd.uninstall_sync()
+    print(f"Stopped and removed {systemd.SYNC_TIMER_NAME}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -416,10 +445,15 @@ def build_parser() -> argparse.ArgumentParser:
         "systemd", help="Install a timer for scheduled random rotation"
     )
     p_install_systemd.add_argument("--interval", choices=["15m", "30m", "1h"])
+    p_install_sync = install_sub.add_parser(
+        "sync-timer", help="Install a timer that periodically runs 'livewall sync'"
+    )
+    p_install_sync.add_argument("--hours", type=float, default=2.0, help="Interval in hours (default: 2)")
 
     p_uninstall = sub.add_parser("uninstall", help="Remove optional integrations")
     uninstall_sub = p_uninstall.add_subparsers(dest="uninstall_target", required=True)
     uninstall_sub.add_parser("systemd", help="Stop and remove the random-rotation timer")
+    uninstall_sub.add_parser("sync-timer", help="Stop and remove the periodic sync timer")
 
     return parser
 
@@ -439,6 +473,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_restart_shell(args)
     if args.command == "install" and args.install_target == "hyprland":
         return cmd_install_hyprland(args)
+    if args.command == "install" and args.install_target == "sync-timer":
+        return cmd_install_sync_timer(args)
+    if args.command == "uninstall" and args.uninstall_target == "sync-timer":
+        return cmd_uninstall_sync_timer(args)
 
     lib = Library()
     config = Config.load()

@@ -63,6 +63,8 @@ livewall gui                         # the full library browser (see below)
 livewall install hyprland            # add the Super+Shift+B picker keybind (opt-in, confirms first)
 livewall install systemd --interval 15m|30m|1h   # scheduled random rotation (opt-in, confirms first)
 livewall uninstall systemd           # stop and remove the random-rotation timer
+livewall install sync-timer [--hours N]   # periodic 'livewall sync' (default 2h, opt-in, confirms first)
+livewall uninstall sync-timer        # stop and remove the periodic sync timer
 ```
 
 ### GUI (`livewall gui`)

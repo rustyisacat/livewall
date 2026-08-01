@@ -1,9 +1,9 @@
-"""Opt-in systemd user timer for scheduled random wallpaper rotation.
+"""Opt-in systemd user timers: scheduled random rotation, and periodic sync.
 
 caelestia-aw already restores the last wallpaper on login by itself, so the
-only automation LiveWall needs to add is periodic random rotation — a plain
-oneshot service + timer pair, regenerated from the current Config whenever
-installed.
+automation LiveWall needs to add is (1) periodic random rotation and (2)
+periodically re-scanning its wallpapers directory for new files — both plain
+oneshot service + timer pairs.
 """
 
 from __future__ import annotations
@@ -73,4 +73,55 @@ def uninstall() -> None:
     subprocess.run(["systemctl", "--user", "disable", "--now", TIMER_NAME], capture_output=True)
     SERVICE_FILE.unlink(missing_ok=True)
     TIMER_FILE.unlink(missing_ok=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+
+
+SYNC_SERVICE_NAME = "livewall-sync.service"
+SYNC_TIMER_NAME = "livewall-sync.timer"
+SYNC_SERVICE_FILE = UNIT_DIR / SYNC_SERVICE_NAME
+SYNC_TIMER_FILE = UNIT_DIR / SYNC_TIMER_NAME
+
+
+def render_sync_service() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Sync new LiveWall wallpapers from caelestia-aw's wallpapers directory\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        f"ExecStart={_livewall_bin()} sync\n"
+    )
+
+
+def render_sync_timer(hours: float) -> str:
+    seconds = int(hours * 3600)
+    return (
+        "[Unit]\n"
+        "Description=Periodically sync new LiveWall wallpapers\n\n"
+        "[Timer]\n"
+        f"OnBootSec={seconds}\n"
+        f"OnUnitActiveSec={seconds}\n"
+        "Persistent=false\n\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+
+def is_sync_installed() -> bool:
+    return SYNC_SERVICE_FILE.exists() and SYNC_TIMER_FILE.exists()
+
+
+def install_sync(hours: float) -> None:
+    UNIT_DIR.mkdir(parents=True, exist_ok=True)
+    SYNC_SERVICE_FILE.write_text(render_sync_service())
+    SYNC_TIMER_FILE.write_text(render_sync_timer(hours))
+    logger.info("Wrote %s and %s", SYNC_SERVICE_FILE, SYNC_TIMER_FILE)
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", SYNC_TIMER_NAME], check=True)
+
+
+def uninstall_sync() -> None:
+    subprocess.run(["systemctl", "--user", "disable", "--now", SYNC_TIMER_NAME], capture_output=True)
+    SYNC_SERVICE_FILE.unlink(missing_ok=True)
+    SYNC_TIMER_FILE.unlink(missing_ok=True)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
