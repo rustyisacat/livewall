@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from livewall.database import Wallpaper
@@ -100,6 +101,23 @@ def refresh_thumbnails() -> None:
         raise ApplyError(exc.stderr.strip() or "thumbnail extraction failed") from exc
     except subprocess.TimeoutExpired as exc:
         raise ApplyError("thumbnail extraction timed out") from exc
+
+
+def restart_shell() -> None:
+    """Restart the Caelestia shell.
+
+    Works around a caelestia-aw bug where WallpaperPauser's QSettings backing
+    store sometimes fails to initialize on startup ("Failed to initialize
+    QSettings instance"), silently pinning pauseOnWindowOverlap/pauseOnBattery
+    to their QML defaults regardless of what's saved in Nexus settings — which
+    freezes video wallpapers. A clean restart forces the singleton to
+    re-initialize from the actual saved config.
+    """
+    if not is_available():
+        raise CaelestiaNotAvailableError("'caelestia' is not on PATH")
+    subprocess.run([CAELESTIA_BIN, "shell", "-k"], capture_output=True, text=True, timeout=10)
+    time.sleep(1)
+    subprocess.run([CAELESTIA_BIN, "shell", "-d"], capture_output=True, text=True, timeout=10)
 
 
 def preview(path: Path, blocking: bool = True) -> subprocess.Popen | None:

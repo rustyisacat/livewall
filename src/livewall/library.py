@@ -70,6 +70,26 @@ class WallpaperInfo:
         return human_duration(self.metadata.duration)
 
 
+def _is_gif(w: Wallpaper) -> bool:
+    return w.file_path.suffix.lower() == ".gif"
+
+
+def sort_by_animated_format(wallpapers: list[Wallpaper]) -> list[Wallpaper]:
+    """Non-.gif files first, alphabetical within each group.
+
+    caelestia-aw only plays real video containers (mp4/webm/mkv) — .gif
+    wallpapers render as a static first frame. When the same wallpaper exists
+    as both, this puts the one that actually animates first.
+    """
+    return sorted(wallpapers, key=lambda w: (_is_gif(w), w.name.lower()))
+
+
+def prefer_non_gif(wallpapers: list[Wallpaper]) -> list[Wallpaper]:
+    """Drop .gif candidates if any non-.gif ones are present, else keep everything."""
+    non_gif = [w for w in wallpapers if not _is_gif(w)]
+    return non_gif or wallpapers
+
+
 class Library:
     """Owns the wallpaper database and coordinates hashing/probing/thumbnailing."""
 
@@ -202,6 +222,7 @@ class Library:
         tags: list[str] | None = None,
         kind: str | None = None,
         favorites_only: bool = False,
+        prefer_animated_format: bool = False,
     ) -> list[Wallpaper]:
         results = self.all()
         if query:
@@ -214,4 +235,6 @@ class Library:
             results = [w for w in results if w.kind == kind]
         if favorites_only:
             results = [w for w in results if w.favorite]
+        if prefer_animated_format:
+            results = sort_by_animated_format(results)
         return results

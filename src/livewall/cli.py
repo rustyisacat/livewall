@@ -19,6 +19,7 @@ from livewall.library import (
     LiveWallError,
     UnsupportedFormatError,
     WallpaperNotFoundError,
+    prefer_non_gif,
 )
 from livewall.utils import setup_logging
 
@@ -196,7 +197,7 @@ def cmd_apply(args: argparse.Namespace, lib: Library, config: Config) -> int:
 def cmd_random(args: argparse.Namespace, lib: Library, config: Config) -> int:
     tags = _split_tags(args.tag) or config.random_tags or None
     favorites_only = args.favorites or config.random_favorites_only
-    candidates = lib.search(tags=tags, favorites_only=favorites_only)
+    candidates = prefer_non_gif(lib.search(tags=tags, favorites_only=favorites_only))
     if not candidates:
         print("No wallpapers match.", file=sys.stderr)
         return 1
@@ -221,6 +222,16 @@ def cmd_status(args: argparse.Namespace, lib: Library) -> int:
             break
     else:
         print("  (not in the LiveWall library)")
+    return 0
+
+
+def cmd_restart_shell(args: argparse.Namespace) -> int:
+    try:
+        engine.restart_shell()
+    except CaelestiaNotAvailableError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print("Restarted the Caelestia shell.")
     return 0
 
 
@@ -363,6 +374,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_random.add_argument("--no-smart", action="store_true")
 
     sub.add_parser("status", help="Show what caelestia-aw currently has applied")
+    sub.add_parser(
+        "restart-shell",
+        help="Restart the Caelestia shell (fixes a caelestia-aw pause-state init bug)",
+    )
 
     p_preview = sub.add_parser("preview", help="Preview a wallpaper in a normal mpv window")
     p_preview.add_argument("name")
@@ -392,6 +407,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_gui(args)
     if args.command == "refresh-thumbs":
         return cmd_refresh_thumbs(args)
+    if args.command == "restart-shell":
+        return cmd_restart_shell(args)
     if args.command == "install" and args.install_target == "hyprland":
         return cmd_install_hyprland(args)
 

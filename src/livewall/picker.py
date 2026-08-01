@@ -55,7 +55,7 @@ class PickerApp(App):
     def refresh_list(self, query: str) -> None:
         list_view = self.query_one("#wall-list", ListView)
         list_view.clear()
-        for wallpaper in self.library.search(query=query):
+        for wallpaper in self.library.search(query=query, prefer_animated_format=True):
             list_view.append(WallpaperItem(wallpaper))
         if list_view.children:
             list_view.index = 0
