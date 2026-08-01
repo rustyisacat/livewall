@@ -1,0 +1,25 @@
+[project]
+name = "livewall"
+version = "0.1.0"
+description = "Live wallpaper manager for Hyprland + Caelestia"
+readme = "README.md"
+authors = [
+    { name = "HChaffin", email = "harrisonchaffin@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "textual>=0.60",
+    "textual-image>=0.13.2",
+]
+
+[project.scripts]
+livewall = "livewall.cli:main"
+livewall-gui = "livewall.gui:run"
+livewall-picker = "livewall.picker:run"
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv_build]
+module-name = "livewall"
