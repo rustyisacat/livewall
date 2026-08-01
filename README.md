@@ -62,6 +62,7 @@ livewall picker                      # the quick picker (see below)
 livewall gui                         # the full library browser (see below)
 livewall install hyprland            # add the Super+Shift+B picker keybind (opt-in, confirms first)
 livewall install systemd --interval 15m|30m|1h   # scheduled random rotation (opt-in, confirms first)
+livewall uninstall systemd           # stop and remove the random-rotation timer
 ```
 
 ### GUI (`livewall gui`)
@@ -82,11 +83,16 @@ floating `foot` window.
 
 ### Settings
 
-`livewall gui` → `s`, or edit `~/.config/livewall/config.json` directly.
-LiveWall only controls what it adds on top of caelestia-aw: scheduled random
-interval, favorites-only/tag-filtered random, and a Material-You-recolour
-opt-out. Rendering, HW decode, and pause-on-battery/fullscreen are Caelestia's
-own settings — see its Nexus settings app.
+`livewall gui` → `s`. LiveWall only controls what it adds on top of
+caelestia-aw: scheduled random interval, favorites-only/tag-filtered random,
+and a Material-You-recolour opt-out. Rendering, HW decode, and
+pause-on-battery/fullscreen are Caelestia's own settings — see its Nexus
+settings app.
+
+Changing "Random interval" here actually installs/removes the
+`livewall-random.timer` systemd unit to match (same as
+`livewall install/uninstall systemd`), not just a config value — so don't
+hand-edit `random_interval` in `config.json`, it won't touch the timer.
 
 ## Architecture
 
