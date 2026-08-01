@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "HChaffin", email = "harrisonchaffin@gmail.com" }
 ]
-license = "MIT"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
     "textual>=0.60",
