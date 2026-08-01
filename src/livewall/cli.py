@@ -267,6 +267,15 @@ def cmd_install_hyprland(args: argparse.Namespace) -> int:
     from livewall import hypr
 
     if hypr.is_installed():
+        if hypr.needs_repair():
+            print(
+                "Already installed, but with a bare 'livewall' command that Hyprland's own "
+                "PATH can't find (it doesn't source your shell rc files). Fixing it to use "
+                f"an absolute path:\n\n  {hypr.KEYBINDS_FILE}\n    {hypr.PICKER_EXEC_CMD}\n"
+            )
+            hypr.repair()
+            print("Fixed. Run 'hyprctl reload' (or restart Hyprland) to apply.")
+            return 0
         print("Hyprland integration is already installed.")
         return 0
 

@@ -8,6 +8,7 @@ touches gets a one-time ``.livewall.bak`` copy first.
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,7 +21,18 @@ RULES_FILE = HYPR_DIR / "hyprland" / "rules.lua"
 
 PICKER_APP_ID = "livewall-picker"
 PICKER_KEYBIND_DEFAULT = "SUPER + SHIFT + B"
-PICKER_EXEC_CMD = f"foot --app-id={PICKER_APP_ID} -e livewall picker"
+
+
+def _livewall_bin() -> str:
+    # Hyprland's own process environment doesn't source shell rc files, so it
+    # generally won't have ~/.local/bin (where `uv tool install` puts things)
+    # on PATH — a bare "livewall" in an exec_cmd silently fails there even
+    # though it works fine from an interactive terminal. Use an absolute path.
+    return shutil.which("livewall") or str(Path.home() / ".local" / "bin" / "livewall")
+
+
+PICKER_EXEC_CMD = f"foot --app-id={PICKER_APP_ID} -e {_livewall_bin()} picker"
+_OLD_PICKER_EXEC_CMD = f"foot --app-id={PICKER_APP_ID} -e livewall picker"
 
 # Anchors matched against the live files to insert after/into, and to detect
 # whether the patch has already been applied (idempotency).
@@ -62,6 +74,24 @@ def is_installed() -> bool:
         )
     except OSError:
         return False
+
+
+def needs_repair() -> bool:
+    """True if an older install used a bare 'livewall' that Hyprland's PATH can't find."""
+    try:
+        text = KEYBINDS_FILE.read_text()
+    except OSError:
+        return False
+    return _OLD_PICKER_EXEC_CMD in text and PICKER_EXEC_CMD not in text
+
+
+def repair() -> bool:
+    text = KEYBINDS_FILE.read_text()
+    if _OLD_PICKER_EXEC_CMD not in text:
+        return False
+    _backup(KEYBINDS_FILE)
+    KEYBINDS_FILE.write_text(text.replace(_OLD_PICKER_EXEC_CMD, PICKER_EXEC_CMD))
+    return True
 
 
 def _backup(path: Path) -> None:
