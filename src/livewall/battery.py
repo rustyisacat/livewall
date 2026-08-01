@@ -16,14 +16,19 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import subprocess
 from pathlib import Path
 
 from livewall import engine
 from livewall.config import CACHE_DIR, ensure_dirs
+from livewall.utils import sha256_file
 
 logger = logging.getLogger(__name__)
 
 STATE_FILE = CACHE_DIR / "battery_saver_state.json"
+FRAME_CACHE_DIR = CACHE_DIR / "battery_frames"
+FRAME_EXTRACT_TIMEOUT = 15
 
 
 def battery_percent() -> int | None:
@@ -48,6 +53,36 @@ def _save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state))
 
 
+def _static_frame_for(video_path: Path) -> Path | None:
+    """A full-resolution single frame from video_path, cached by content hash.
+
+    caelestia-aw's own wallpaper thumbnail (~/.local/state/caelestia/wallpaper/
+    thumbnail.jpg) is only 128x72 — built for Material You colour extraction,
+    not for display. Applying it as the actual background renders as
+    effectively black once the shell's mask/blur effects hit that few pixels.
+    Extracting our own frame at the source's native resolution avoids that.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return None
+
+    FRAME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    key = sha256_file(video_path)
+    out_path = FRAME_CACHE_DIR / f"{key}.jpg"
+    if out_path.exists():
+        return out_path
+
+    cmd = [ffmpeg, "-y", "-v", "error", "-i", str(video_path), "-frames:v", "1", str(out_path)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=FRAME_EXTRACT_TIMEOUT, check=True)
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.warning("Frame extraction failed for %s: %s", video_path, exc)
+        out_path.unlink(missing_ok=True)
+        return None
+
+    return out_path if out_path.exists() else None
+
+
 def check(low: int, high: int) -> str:
     """Run one check against the current battery level. Returns a status string."""
     percent = battery_percent()
@@ -60,10 +95,14 @@ def check(low: int, high: int) -> str:
         current = engine.current_path()
         if current is None:
             return f"battery at {percent}% (<= {low}%), but no wallpaper is currently applied"
-        if not engine.CURRENT_WALLPAPER_THUMBNAIL.exists():
-            return f"battery at {percent}% (<= {low}%), but no thumbnail available to fall back to"
+        if not current.exists():
+            return f"battery at {percent}% (<= {low}%), but '{current}' no longer exists"
 
-        engine.apply_path(engine.CURRENT_WALLPAPER_THUMBNAIL, no_smart=True)
+        frame = _static_frame_for(current)
+        if frame is None:
+            return f"battery at {percent}% (<= {low}%), but couldn't extract a static frame"
+
+        engine.apply_path(frame, no_smart=True)
         _save_state({"active": True, "saved_path": str(current)})
         return f"battery at {percent}% <= {low}% — switched to a static frame (saved '{current.name}')"
 

@@ -28,7 +28,6 @@ APPLY_TIMEOUT = 30
 
 _state_dir = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state"))
 CURRENT_WALLPAPER_STATE = _state_dir / "caelestia" / "wallpaper" / "path.txt"
-CURRENT_WALLPAPER_THUMBNAIL = CURRENT_WALLPAPER_STATE.parent / "thumbnail.jpg"
 
 
 class CaelestiaNotAvailableError(RuntimeError):
