@@ -65,9 +65,8 @@ livewall install systemd --interval 15m|30m|1h   # scheduled random rotation (op
 livewall uninstall systemd           # stop and remove the random-rotation timer
 livewall install sync-timer [--hours N]   # periodic 'livewall sync' (default 2h, opt-in, confirms first)
 livewall uninstall sync-timer        # stop and remove the periodic sync timer
-livewall install battery-saver [--low 15] [--high 25] [--check-seconds 60]  # opt-in, confirms first
-livewall uninstall battery-saver     # stop and remove the battery saver timer
-livewall battery-check               # run one battery-saver check immediately
+livewall install battery-saver [--low 15] [--high 25]   # opt-in, confirms first, see below
+livewall uninstall battery-saver     # revert the battery saver patch
 ```
 
 ### GUI (`livewall gui`)
@@ -112,8 +111,8 @@ No giant single file — each module owns one concern:
 | `library.py` | add/remove/rename/import/search/tag/favorite/dedupe, on top of `database.py` + `thumbnail.py` |
 | `engine.py` | thin wrapper around `caelestia wallpaper -f/--extract-thumbs` and its state file — LiveWall never renders anything itself |
 | `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
-| `systemd.py` | opt-in systemd `--user` timers: random rotation, periodic sync, battery saver |
-| `battery.py` | battery-percentage wallpaper saver logic (see below) |
+| `systemd.py` | opt-in systemd `--user` timers: random rotation, periodic sync |
+| `battery.py` | opt-in `WallpaperPauser.qml` patch for battery-percentage pause (see below) |
 | `cli.py` | argparse entry point (`livewall ...`) |
 | `gui.py` | Textual library browser |
 | `picker.py` | Textual quick picker |
@@ -132,16 +131,29 @@ stores paths into wherever they already live (by default,
 
 caelestia-aw's own `WallpaperPauser` only knows "on AC or not" — no
 percentage threshold — and exposes no pause/resume IPC for wallpapers at all
-(`caelestia shell -s` shows `target wallpaper` has only `list/set/get`).
-So "pausing" isn't literally possible from the outside; what LiveWall does
-instead, and what actually addresses the battery cost, is switch to a static
-frame of the current wallpaper once battery drops to your low threshold
-(video decode is the expensive part — a still image is nearly free), and
-switch back to the real video once it recovers to your high threshold.
-Hysteresis between the two thresholds (default 15% / 25%) stops it from
-flapping back and forth right at one cutoff. It's driven purely by battery
-percentage, not charging state — install it with `livewall install
-battery-saver`, check-run it manually any time with `livewall battery-check`.
+(`caelestia shell -s` shows `target wallpaper` has only `list/set/get`). A
+static-frame swap was tried first and abandoned: static images are broken on
+some caelestia-aw installs (confirmed by applying caelestia-aw's own bundled
+default wallpaper and getting the same result), independent of anything
+LiveWall generates — not something fixable from here.
+
+So `livewall install battery-saver` instead makes a small, targeted patch to
+caelestia-aw's own `WallpaperPauser.qml`: it adds a battery-**percentage**
+check (`UPower.displayDevice.percentage`) with its own hysteresis (default
+15% low / 25% high) alongside the existing AC-based rule, and reacts to
+`percentageChanged` immediately — no polling. When it fires, it calls
+caelestia-aw's real internal `pause()`/`resume()`, which freezes and resumes
+the actual current video frame in place, exactly like its existing
+pause-behind-windows feature already does, just driven by percentage instead
+of AC status.
+
+This is the one part of LiveWall that edits a caelestia-aw file instead of
+just calling its CLI. On Arch/AUR installs `WallpaperPauser.qml` is normally
+owned by your own user (not root), so no `sudo` is needed — but a
+`caelestia-shell` package update will overwrite it, so re-run `livewall
+install battery-saver` after that happens. A backup is made automatically
+(`WallpaperPauser.qml.livewall.bak`) and `livewall uninstall battery-saver`
+restores it.
 
 ## Known caelestia-aw issues LiveWall works around
 

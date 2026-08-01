@@ -1,119 +1,145 @@
-"""Battery-percentage wallpaper saver — independent of AC/charging status.
+"""Battery-percentage wallpaper pause via a small caelestia-aw shell patch.
 
 caelestia-aw's own WallpaperPauser only pauses based on whether you're on AC
-power at all, with no percentage threshold, and exposes no pause/resume IPC
-for wallpapers (only `list/set/get` — confirmed via `caelestia shell -s`).
-So there's no real "pause" primitive to call into.
+power at all, never battery *percentage*, and exposes no external IPC to
+call its real pause()/resume() (which freezes/resumes the exact current
+video frame — `caelestia shell -s` confirms `target wallpaper` only has
+list/set/get). Applying a static image instead of pausing doesn't work
+either: static images are broken on this install, confirmed by applying
+caelestia-aw's own bundled default wallpaper asset and seeing the same
+black-screen result, independent of anything LiveWall generates.
 
-What we *can* do, and what actually matters for battery: switch to a static
-frame of the current wallpaper when the battery drops low (video decode is
-the expensive part, a static image is nearly free), and switch back once it
-recovers. Hysteresis (a low and a high threshold) avoids flapping right at
-one cutoff.
+The only way left to get genuine percentage-based, AC-independent pausing
+that freezes the live frame is to patch WallpaperPauser.qml itself: add a
+battery-percentage check with its own hysteresis, using
+UPower.displayDevice.percentage directly, alongside its existing rules, and
+wire percentageChanged so it reacts immediately — no external polling timer
+needed at all once this is in place.
+
+This is the one piece of LiveWall that reaches into caelestia-aw's own
+installed files rather than just calling its CLI. The file is owned by the
+user (not root), so no sudo is required — but a caelestia-shell package
+update will overwrite it, so this needs re-applying after that happens.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import shutil
-import subprocess
 from pathlib import Path
-
-from livewall import engine
-from livewall.config import CACHE_DIR, ensure_dirs
-from livewall.utils import sha256_file
 
 logger = logging.getLogger(__name__)
 
-STATE_FILE = CACHE_DIR / "battery_saver_state.json"
-FRAME_CACHE_DIR = CACHE_DIR / "battery_frames"
-FRAME_EXTRACT_TIMEOUT = 15
+WALLPAPER_PAUSER_FILE = Path("/etc/xdg/quickshell/caelestia/services/WallpaperPauser.qml")
+
+_PROPS_ANCHOR = 'property string hwDecoder: "none"'
+
+_RECALC_OLD = (
+    'let newPaused = false;\n'
+    '        let reason = "None";\n'
+    '\n'
+    '        // Rule #1 — Battery\n'
+    '        if (pauseOnBattery && UPower.onBattery) {'
+)
+
+_CONNECTIONS_ANCHOR = (
+    'Connections {\n'
+    '        target: UPower\n'
+    '        function onOnBatteryChanged() {\n'
+    '            recalcTimer.restart();\n'
+    '        }\n'
+    '    }'
+)
+
+_MARKER = "LiveWall battery-percentage saver"
 
 
-def battery_percent() -> int | None:
-    """The first battery's charge percentage, or None if there isn't one."""
-    for capacity_file in sorted(Path("/sys/class/power_supply").glob("BAT*/capacity")):
-        try:
-            return int(capacity_file.read_text().strip())
-        except (OSError, ValueError):
-            continue
-    return None
+def _props_insert(low: float, high: float) -> str:
+    return (
+        f'{_PROPS_ANCHOR}\n'
+        f'    property real batterySaverLowPercent: {low}\n'
+        f'    property real batterySaverHighPercent: {high}\n'
+        f'    property bool _batterySaverActive: false'
+    )
 
 
-def _load_state() -> dict:
+_RECALC_NEW = (
+    'let newPaused = false;\n'
+    '        let reason = "None";\n'
+    '\n'
+    f'        // {_MARKER} — independent of AC status, own hysteresis\n'
+    '        if (batterySaverLowPercent < 100) {\n'
+    '            const battPct = UPower.displayDevice ? UPower.displayDevice.percentage * 100 : 100;\n'
+    '            if (!_batterySaverActive && battPct <= batterySaverLowPercent) {\n'
+    '                _batterySaverActive = true;\n'
+    '            } else if (_batterySaverActive && battPct >= batterySaverHighPercent) {\n'
+    '                _batterySaverActive = false;\n'
+    '            }\n'
+    '        }\n'
+    '\n'
+    '        if (_batterySaverActive) {\n'
+    '            newPaused = true;\n'
+    f'            reason = "{_MARKER}";\n'
+    '        } else if (pauseOnBattery && UPower.onBattery) {'
+)
+
+_CONNECTIONS_INSERT = (
+    _CONNECTIONS_ANCHOR
+    + '\n\n    Connections {\n'
+    '        target: UPower.displayDevice\n'
+    '        function onPercentageChanged() {\n'
+    '            recalcTimer.restart();\n'
+    '        }\n'
+    '    }'
+)
+
+
+def is_available() -> bool:
+    return WALLPAPER_PAUSER_FILE.exists()
+
+
+def is_patched() -> bool:
     try:
-        return json.loads(STATE_FILE.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {"active": False, "saved_path": None}
+        return _MARKER in WALLPAPER_PAUSER_FILE.read_text()
+    except OSError:
+        return False
 
 
-def _save_state(state: dict) -> None:
-    ensure_dirs()
-    STATE_FILE.write_text(json.dumps(state))
+def _backup_path() -> Path:
+    return WALLPAPER_PAUSER_FILE.with_suffix(".qml.livewall.bak")
 
 
-def _static_frame_for(video_path: Path) -> Path | None:
-    """A full-resolution single frame from video_path, cached by content hash.
+def patch(low: float, high: float) -> None:
+    if not WALLPAPER_PAUSER_FILE.exists():
+        raise FileNotFoundError(f"{WALLPAPER_PAUSER_FILE} not found")
 
-    caelestia-aw's own wallpaper thumbnail (~/.local/state/caelestia/wallpaper/
-    thumbnail.jpg) is only 128x72 — built for Material You colour extraction,
-    not for display. Applying it as the actual background renders as
-    effectively black once the shell's mask/blur effects hit that few pixels.
-    Extracting our own frame at the source's native resolution avoids that.
-    """
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        return None
+    backup = _backup_path()
+    if is_patched():
+        # Re-patching with new thresholds: start from the pristine backup, not the already-patched file.
+        if not backup.exists():
+            raise RuntimeError("Already patched but no backup found — refusing to guess the original")
+        original = backup.read_text()
+    else:
+        original = WALLPAPER_PAUSER_FILE.read_text()
+        if not backup.exists():
+            backup.write_text(original)
 
-    FRAME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    key = sha256_file(video_path)
-    out_path = FRAME_CACHE_DIR / f"{key}.jpg"
-    if out_path.exists():
-        return out_path
+    if _PROPS_ANCHOR not in original or _RECALC_OLD not in original or _CONNECTIONS_ANCHOR not in original:
+        raise RuntimeError(
+            "WallpaperPauser.qml doesn't match the structure this patch expects — not touching it"
+        )
 
-    cmd = [ffmpeg, "-y", "-v", "error", "-i", str(video_path), "-frames:v", "1", str(out_path)]
-    try:
-        subprocess.run(cmd, capture_output=True, timeout=FRAME_EXTRACT_TIMEOUT, check=True)
-    except (subprocess.SubprocessError, OSError) as exc:
-        logger.warning("Frame extraction failed for %s: %s", video_path, exc)
-        out_path.unlink(missing_ok=True)
-        return None
+    patched = original.replace(_PROPS_ANCHOR, _props_insert(low, high), 1)
+    patched = patched.replace(_RECALC_OLD, _RECALC_NEW, 1)
+    patched = patched.replace(_CONNECTIONS_ANCHOR, _CONNECTIONS_INSERT, 1)
 
-    return out_path if out_path.exists() else None
+    WALLPAPER_PAUSER_FILE.write_text(patched)
+    logger.info("Patched %s (low=%s, high=%s)", WALLPAPER_PAUSER_FILE, low, high)
 
 
-def check(low: int, high: int) -> str:
-    """Run one check against the current battery level. Returns a status string."""
-    percent = battery_percent()
-    if percent is None:
-        return "no battery detected — nothing to do"
-
-    state = _load_state()
-
-    if not state.get("active") and percent <= low:
-        current = engine.current_path()
-        if current is None:
-            return f"battery at {percent}% (<= {low}%), but no wallpaper is currently applied"
-        if not current.exists():
-            return f"battery at {percent}% (<= {low}%), but '{current}' no longer exists"
-
-        frame = _static_frame_for(current)
-        if frame is None:
-            return f"battery at {percent}% (<= {low}%), but couldn't extract a static frame"
-
-        engine.apply_path(frame, no_smart=True)
-        _save_state({"active": True, "saved_path": str(current)})
-        return f"battery at {percent}% <= {low}% — switched to a static frame (saved '{current.name}')"
-
-    if state.get("active") and percent >= high:
-        saved_path = state.get("saved_path")
-        if saved_path and Path(saved_path).exists():
-            engine.apply_path(Path(saved_path))
-            _save_state({"active": False, "saved_path": None})
-            return f"battery at {percent}% >= {high}% — restored '{Path(saved_path).name}'"
-        _save_state({"active": False, "saved_path": None})
-        return f"battery at {percent}% >= {high}%, but the saved wallpaper is gone — cleared saver state"
-
-    status = "active (static fallback)" if state.get("active") else "inactive"
-    return f"battery at {percent}% — no change ({status})"
+def unpatch() -> bool:
+    backup = _backup_path()
+    if not backup.exists():
+        return False
+    WALLPAPER_PAUSER_FILE.write_text(backup.read_text())
+    logger.info("Restored %s from backup", WALLPAPER_PAUSER_FILE)
+    return True
