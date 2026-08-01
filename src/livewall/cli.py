@@ -330,6 +330,21 @@ def cmd_install_systemd(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_uninstall_systemd(args: argparse.Namespace, config: Config) -> int:
+    from livewall import systemd
+
+    if not systemd.is_installed():
+        print("No systemd random-rotation timer is installed.")
+        return 0
+
+    systemd.uninstall()
+    if config.random_interval != "off":
+        config.random_interval = "off"
+        config.save()
+    print(f"Stopped and removed {systemd.TIMER_NAME}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -402,6 +417,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_install_systemd.add_argument("--interval", choices=["15m", "30m", "1h"])
 
+    p_uninstall = sub.add_parser("uninstall", help="Remove optional integrations")
+    uninstall_sub = p_uninstall.add_subparsers(dest="uninstall_target", required=True)
+    uninstall_sub.add_parser("systemd", help="Stop and remove the random-rotation timer")
+
     return parser
 
 
@@ -426,6 +445,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "install" and args.install_target == "systemd":
         return cmd_install_systemd(args, config)
+    if args.command == "uninstall" and args.uninstall_target == "systemd":
+        return cmd_uninstall_systemd(args, config)
 
     dispatch_with_config = {
         "apply": cmd_apply,
