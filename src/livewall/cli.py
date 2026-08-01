@@ -281,6 +281,35 @@ def cmd_install_hyprland(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_systemd(args: argparse.Namespace, config: Config) -> int:
+    from livewall import systemd
+
+    interval = args.interval or config.random_interval
+    if interval == "off":
+        print(
+            "No random interval configured. Pass one explicitly, e.g.:\n"
+            "  livewall install systemd --interval 30m",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"This will install a systemd --user timer that runs 'livewall random' every {interval}:")
+    print(f"\n  {systemd.SERVICE_FILE}\n{systemd.render_service()}")
+    print(f"  {systemd.TIMER_FILE}\n{systemd.render_timer(interval)}")
+    reply = input("Install and enable it now? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    if interval != config.random_interval:
+        config.random_interval = interval
+        config.save()
+
+    systemd.install(interval)
+    print(f"Installed and started {systemd.TIMER_NAME}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -344,6 +373,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_install = sub.add_parser("install", help="Install optional integrations")
     install_sub = p_install.add_subparsers(dest="install_target", required=True)
     install_sub.add_parser("hyprland", help="Add the Super+Shift+B picker keybind")
+    p_install_systemd = install_sub.add_parser(
+        "systemd", help="Install a timer for scheduled random rotation"
+    )
+    p_install_systemd.add_argument("--interval", choices=["15m", "30m", "1h"])
 
     return parser
 
@@ -364,6 +397,9 @@ def main(argv: list[str] | None = None) -> int:
 
     lib = Library()
     config = Config.load()
+
+    if args.command == "install" and args.install_target == "systemd":
+        return cmd_install_systemd(args, config)
 
     dispatch_with_config = {
         "apply": cmd_apply,
