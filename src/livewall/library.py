@@ -181,6 +181,21 @@ class Library:
         """Import everything already under caelestia-aw's own wallpapers directory."""
         return self.import_folder(CAELESTIA_WALLPAPERS_DIR, recursive=True)
 
+    def relocate(self, name: str, new_path: Path) -> Wallpaper:
+        """Point an existing entry at a new location for the same file (e.g. after a move).
+
+        Content is assumed unchanged, so the hash — and therefore the cached
+        thumbnail — stays valid; only the path is updated.
+        """
+        wallpaper = self.get(name)
+        new_path = new_path.expanduser().resolve()
+        if not new_path.is_file():
+            raise LiveWallError(f"Not a file: {new_path}")
+        wallpaper.path = str(new_path)
+        self.db.save()
+        logger.info("Relocated '%s' -> %s", name, new_path)
+        return wallpaper
+
     def remove(self, name: str) -> Wallpaper:
         wallpaper = self.db.remove(name)
         if wallpaper is None:
