@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 
 from textual import on
 from textual.app import App, ComposeResult
@@ -131,6 +132,14 @@ class SettingsScreen(Screen):
         super().__init__()
         self.config = Config.load()
 
+    @staticmethod
+    def _timer_status() -> str:
+        from livewall import systemd
+
+        if systemd.is_installed():
+            return "[dim]Timer status: installed and enabled[/dim]"
+        return "[dim]Timer status: not installed[/dim]"
+
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="settings-box"):
@@ -146,6 +155,7 @@ class SettingsScreen(Screen):
                     value=self.config.random_interval,
                     id="random_interval",
                 )
+            yield Static(self._timer_status(), id="timer-status")
             with Horizontal(classes="settings-row"):
                 yield Label("Random: favorites only")
                 yield Switch(value=self.config.random_favorites_only, id="random_favorites_only")
@@ -162,12 +172,32 @@ class SettingsScreen(Screen):
 
     @on(Button.Pressed, "#save")
     def save(self) -> None:
-        self.config.random_interval = self.query_one("#random_interval", Select).value
+        new_interval = self.query_one("#random_interval", Select).value
+        interval_changed = new_interval != self.config.random_interval
+
+        self.config.random_interval = new_interval
         self.config.random_favorites_only = self.query_one("#random_favorites_only", Switch).value
         raw_tags = self.query_one("#random_tags", Input).value
         self.config.random_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         self.config.no_smart_colours = self.query_one("#no_smart_colours", Switch).value
         self.config.save()
+
+        if interval_changed:
+            from livewall import systemd
+
+            try:
+                if new_interval == "off":
+                    if systemd.is_installed():
+                        systemd.uninstall()
+                else:
+                    systemd.install(new_interval)
+            except (subprocess.CalledProcessError, OSError) as exc:
+                self.notify(f"Settings saved, but the timer update failed: {exc}", severity="warning")
+                self.app.pop_screen()
+                return
+
+            self.query_one("#timer-status", Static).update(self._timer_status())
+
         self.notify("Settings saved")
         self.app.pop_screen()
 
