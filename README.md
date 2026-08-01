@@ -67,6 +67,8 @@ livewall install sync-timer [--hours N]   # periodic 'livewall sync' (default 2h
 livewall uninstall sync-timer        # stop and remove the periodic sync timer
 livewall install battery-saver [--low 15] [--high 25]   # opt-in, confirms first, see below
 livewall uninstall battery-saver     # revert the battery saver patch
+livewall install boot-fix            # auto-restart-shell ~15s after login, see below
+livewall uninstall boot-fix          # remove the boot-time auto-restart
 ```
 
 ### GUI (`livewall gui`)
@@ -111,7 +113,7 @@ No giant single file — each module owns one concern:
 | `library.py` | add/remove/rename/import/search/tag/favorite/dedupe, on top of `database.py` + `thumbnail.py` |
 | `engine.py` | thin wrapper around `caelestia wallpaper -f/--extract-thumbs` and its state file — LiveWall never renders anything itself |
 | `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
-| `systemd.py` | opt-in systemd `--user` timers: random rotation, periodic sync |
+| `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix |
 | `battery.py` | opt-in `WallpaperPauser.qml` patch for battery-percentage pause (see below) |
 | `cli.py` | argparse entry point (`livewall ...`) |
 | `gui.py` | Textual library browser |
@@ -165,7 +167,11 @@ restores it.
   settings — which freezes all video wallpapers. Run `livewall restart-shell`
   to force a clean re-init; `livewall gui`/`livewall picker` will still
   *apply* correctly even while this is happening, they just won't visibly
-  animate until the shell is restarted.
+  animate until the shell is restarted. This can happen on the shell's very
+  *first* launch too (i.e. right after login/boot, since `caelestia shell -d`
+  runs via Hyprland's own startup hook) — `livewall install boot-fix` installs
+  a systemd `--user` service that runs `restart-shell` once, ~15s after every
+  login, so you don't have to notice and fix it by hand.
 - **`.gif` files never animate**, independent of the above — caelestia-aw
   only plays real video containers (`.mp4`/`.webm`/`.mkv`) via QtMultimedia;
   `.gif` always renders as a static first frame (both its Python CLI's

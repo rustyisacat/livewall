@@ -425,6 +425,38 @@ def cmd_uninstall_battery_saver(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_boot_fix(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    print(
+        "This will install a systemd --user service that runs 'livewall restart-shell' "
+        f"once, {systemd.BOOT_FIX_DELAY_SECONDS}s after every login — works around a "
+        "caelestia-aw bug where its pause-state can init incorrectly on the shell's first "
+        "launch, silently freezing the wallpaper right after boot:"
+    )
+    print(f"\n  {systemd.BOOT_FIX_SERVICE_FILE}\n{systemd.render_boot_fix_service()}")
+    reply = input("Install and enable it now? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    systemd.install_boot_fix()
+    print(f"Installed and enabled {systemd.BOOT_FIX_SERVICE_NAME}.")
+    return 0
+
+
+def cmd_uninstall_boot_fix(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    if not systemd.is_boot_fix_installed():
+        print("The boot fix is not installed.")
+        return 0
+
+    systemd.uninstall_boot_fix()
+    print(f"Stopped and removed {systemd.BOOT_FIX_SERVICE_NAME}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -506,12 +538,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_install_battery.add_argument("--low", type=int, help="Pause at or below this %% (default: 15)")
     p_install_battery.add_argument("--high", type=int, help="Resume at or above this %% (default: 25)")
+    install_sub.add_parser(
+        "boot-fix",
+        help="Auto-restart the shell shortly after login to work around a caelestia-aw pause-state bug",
+    )
 
     p_uninstall = sub.add_parser("uninstall", help="Remove optional integrations")
     uninstall_sub = p_uninstall.add_subparsers(dest="uninstall_target", required=True)
     uninstall_sub.add_parser("systemd", help="Stop and remove the random-rotation timer")
     uninstall_sub.add_parser("sync-timer", help="Stop and remove the periodic sync timer")
     uninstall_sub.add_parser("battery-saver", help="Revert the battery saver patch")
+    uninstall_sub.add_parser("boot-fix", help="Remove the boot-time auto-restart")
 
     return parser
 
@@ -535,6 +572,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_install_sync_timer(args)
     if args.command == "uninstall" and args.uninstall_target == "sync-timer":
         return cmd_uninstall_sync_timer(args)
+    if args.command == "install" and args.install_target == "boot-fix":
+        return cmd_install_boot_fix(args)
+    if args.command == "uninstall" and args.uninstall_target == "boot-fix":
+        return cmd_uninstall_boot_fix(args)
 
     lib = Library()
     config = Config.load()

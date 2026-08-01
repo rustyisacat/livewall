@@ -25,7 +25,13 @@ TIMER_FILE = UNIT_DIR / TIMER_NAME
 
 
 def _livewall_bin() -> str:
-    return shutil.which("livewall") or str(Path.home() / ".local" / "bin" / "livewall")
+    # Prefer the stable `uv tool install` location over whatever's first on the
+    # current PATH — `uv run` prepends the project's own .venv/bin, which would
+    # bake a dev-environment-only path into a unit file meant to run standalone.
+    stable = Path.home() / ".local" / "bin" / "livewall"
+    if stable.exists():
+        return str(stable)
+    return shutil.which("livewall") or str(stable)
 
 
 def render_service() -> str:
@@ -124,6 +130,48 @@ def uninstall_sync() -> None:
     subprocess.run(["systemctl", "--user", "disable", "--now", SYNC_TIMER_NAME], capture_output=True)
     SYNC_SERVICE_FILE.unlink(missing_ok=True)
     SYNC_TIMER_FILE.unlink(missing_ok=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+
+
+BOOT_FIX_SERVICE_NAME = "livewall-boot-fix.service"
+BOOT_FIX_SERVICE_FILE = UNIT_DIR / BOOT_FIX_SERVICE_NAME
+BOOT_FIX_DELAY_SECONDS = 15
+
+
+def render_boot_fix_service() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Work around caelestia-aw's flaky pause-state init shortly after login\n"
+        "After=graphical-session.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        # caelestia shell -d forks a detached daemon without escaping this service's
+        # cgroup — the default KillMode=control-group would kill that freshly-spawned
+        # process the moment this oneshot's ExecStart exits. KillMode=none leaves it running.
+        "KillMode=none\n"
+        f"ExecStartPre=/usr/bin/sleep {BOOT_FIX_DELAY_SECONDS}\n"
+        f"ExecStart={_livewall_bin()} restart-shell\n\n"
+        "[Install]\n"
+        "WantedBy=graphical-session.target\n"
+    )
+
+
+def is_boot_fix_installed() -> bool:
+    return BOOT_FIX_SERVICE_FILE.exists()
+
+
+def install_boot_fix() -> None:
+    UNIT_DIR.mkdir(parents=True, exist_ok=True)
+    BOOT_FIX_SERVICE_FILE.write_text(render_boot_fix_service())
+    logger.info("Wrote %s", BOOT_FIX_SERVICE_FILE)
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", BOOT_FIX_SERVICE_NAME], check=True)
+
+
+def uninstall_boot_fix() -> None:
+    subprocess.run(["systemctl", "--user", "disable", BOOT_FIX_SERVICE_NAME], capture_output=True)
+    BOOT_FIX_SERVICE_FILE.unlink(missing_ok=True)
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
 
 
