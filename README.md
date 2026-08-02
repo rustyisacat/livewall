@@ -69,6 +69,8 @@ livewall install battery-saver [--low 15] [--high 25]   # opt-in, confirms first
 livewall uninstall battery-saver     # revert the battery saver patch
 livewall install boot-fix            # auto-restart-shell ~15s after login, see below
 livewall uninstall boot-fix          # remove the boot-time auto-restart
+livewall install desktop-entry       # add LiveWall to your app launcher (opt-in, confirms first)
+livewall uninstall desktop-entry     # remove it from the launcher
 ```
 
 ### GUI (`livewall gui`)
@@ -76,6 +78,11 @@ livewall uninstall boot-fix          # remove the boot-time auto-restart
 A Textual app: search/filter on the left, thumbnail + metadata detail pane on
 the right. Keys: `/` search, `a` apply, `f` favorite, `p` preview, `d` delete,
 `r` rename, `t` edit tags, `i` import a folder, `s` settings.
+
+Run `livewall install desktop-entry` to make it launchable from your app
+launcher (like Caelestia's own) instead of typing the command — it's a
+`.desktop` entry whose `Exec=` opens it in a `foot` window, the standard
+approach for terminal apps.
 
 ### Quick picker (`livewall picker`)
 
@@ -113,6 +120,7 @@ No giant single file — each module owns one concern:
 | `library.py` | add/remove/rename/import/search/tag/favorite/dedupe, on top of `database.py` + `thumbnail.py` |
 | `engine.py` | thin wrapper around `caelestia wallpaper -f/--extract-thumbs` and its state file — LiveWall never renders anything itself |
 | `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
+| `desktop.py` | opt-in `.desktop` entry + icon so `livewall gui` shows up in your app launcher |
 | `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix |
 | `battery.py` | opt-in `WallpaperPauser.qml` patch for battery-percentage pause (see below) |
 | `cli.py` | argparse entry point (`livewall ...`) |

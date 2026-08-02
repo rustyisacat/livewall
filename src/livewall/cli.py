@@ -263,6 +263,41 @@ def cmd_gui(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_desktop_entry(args: argparse.Namespace) -> int:
+    from livewall import desktop
+
+    if desktop.is_installed():
+        print("Already installed. Reinstalling to pick up any changes.")
+
+    print("This will write:")
+    print(f"\n  {desktop.DESKTOP_FILE}\n{desktop.render_desktop_file()}")
+    print(f"  {desktop.ICON_DEST}  (icon)")
+    reply = input("Install now? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    try:
+        desktop.install()
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print("Installed. LiveWall should now show up in your app launcher.")
+    return 0
+
+
+def cmd_uninstall_desktop_entry(args: argparse.Namespace) -> int:
+    from livewall import desktop
+
+    if not desktop.is_installed():
+        print("The desktop entry is not installed.")
+        return 0
+
+    desktop.uninstall()
+    print("Removed the LiveWall desktop entry.")
+    return 0
+
+
 def cmd_install_hyprland(args: argparse.Namespace) -> int:
     from livewall import hypr
 
@@ -524,6 +559,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_install = sub.add_parser("install", help="Install optional integrations")
     install_sub = p_install.add_subparsers(dest="install_target", required=True)
     install_sub.add_parser("hyprland", help="Add the Super+Shift+B picker keybind")
+    install_sub.add_parser("desktop-entry", help="Add LiveWall to your app launcher")
     p_install_systemd = install_sub.add_parser(
         "systemd", help="Install a timer for scheduled random rotation"
     )
@@ -549,6 +585,7 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall_sub.add_parser("sync-timer", help="Stop and remove the periodic sync timer")
     uninstall_sub.add_parser("battery-saver", help="Revert the battery saver patch")
     uninstall_sub.add_parser("boot-fix", help="Remove the boot-time auto-restart")
+    uninstall_sub.add_parser("desktop-entry", help="Remove LiveWall from your app launcher")
 
     return parser
 
@@ -568,6 +605,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_restart_shell(args)
     if args.command == "install" and args.install_target == "hyprland":
         return cmd_install_hyprland(args)
+    if args.command == "install" and args.install_target == "desktop-entry":
+        return cmd_install_desktop_entry(args)
+    if args.command == "uninstall" and args.uninstall_target == "desktop-entry":
+        return cmd_uninstall_desktop_entry(args)
     if args.command == "install" and args.install_target == "sync-timer":
         return cmd_install_sync_timer(args)
     if args.command == "uninstall" and args.uninstall_target == "sync-timer":
