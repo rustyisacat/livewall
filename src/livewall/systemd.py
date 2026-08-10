@@ -135,7 +135,7 @@ def uninstall_sync() -> None:
 
 BOOT_FIX_SERVICE_NAME = "livewall-boot-fix.service"
 BOOT_FIX_SERVICE_FILE = UNIT_DIR / BOOT_FIX_SERVICE_NAME
-BOOT_FIX_DELAY_SECONDS = 15
+BOOT_FIX_DELAY_SECONDS = 5
 
 
 def render_boot_fix_service() -> str:
@@ -150,7 +150,10 @@ def render_boot_fix_service() -> str:
         # process the moment this oneshot's ExecStart exits. KillMode=none leaves it running.
         "KillMode=none\n"
         f"ExecStartPre=/usr/bin/sleep {BOOT_FIX_DELAY_SECONDS}\n"
-        f"ExecStart={_livewall_bin()} restart-shell\n\n"
+        # ensure-playing only restarts the shell if the wallpaper genuinely isn't
+        # decoding — most boots don't hit the bug at all, so this skips the costly
+        # kill+restart in the common case instead of paying it unconditionally.
+        f"ExecStart={_livewall_bin()} ensure-playing\n\n"
         "[Install]\n"
         "WantedBy=graphical-session.target\n"
     )

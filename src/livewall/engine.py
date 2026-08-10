@@ -26,6 +26,11 @@ MPV_BIN = "mpv"
 EXTRACT_THUMBS_TIMEOUT = 120
 APPLY_TIMEOUT = 30
 
+# Only these actually get continuous QtMultimedia decode — gif/static images
+# have nothing to sample, so ensure_playing() can't verify them meaningfully.
+_TRUE_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mkv"}
+_DECODE_SAMPLE_SECONDS = 0.6
+
 _state_dir = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state"))
 CURRENT_WALLPAPER_STATE = _state_dir / "caelestia" / "wallpaper" / "path.txt"
 
@@ -122,6 +127,51 @@ def restart_shell() -> None:
     subprocess.run([CAELESTIA_BIN, "shell", "-k"], capture_output=True, text=True, timeout=10)
     time.sleep(1)
     subprocess.run([CAELESTIA_BIN, "shell", "-d"], capture_output=True, text=True, timeout=10)
+
+
+def _qs_pid() -> int | None:
+    result = subprocess.run(["pgrep", "-x", "qs"], capture_output=True, text=True, timeout=5)
+    pids = result.stdout.split()
+    return int(pids[0]) if pids else None
+
+
+def _cpu_ticks(pid: int) -> int:
+    with open(f"/proc/{pid}/stat") as f:
+        parts = f.read().split()
+    return int(parts[13]) + int(parts[14])
+
+
+def ensure_playing() -> str:
+    """Restart the shell only if the current video wallpaper isn't actually decoding.
+
+    A cheap, targeted alternative to always calling restart_shell(): most boots
+    don't hit the QSettings init flakiness at all, so paying a full shell
+    kill+restart every time is needless (and slow). This samples decode CPU
+    briefly first and only restarts when that comes back genuinely idle.
+    """
+    current = current_path()
+    if current is None:
+        return "no wallpaper applied, nothing to check"
+    if current.suffix.lower() not in _TRUE_VIDEO_EXTENSIONS:
+        return f"current wallpaper ({current.suffix}) isn't a video, nothing to verify"
+
+    pid = _qs_pid()
+    if pid is None:
+        subprocess.run([CAELESTIA_BIN, "shell", "-d"], capture_output=True, text=True, timeout=10)
+        return "shell wasn't running — started it"
+
+    try:
+        before = _cpu_ticks(pid)
+        time.sleep(_DECODE_SAMPLE_SECONDS)
+        after = _cpu_ticks(pid)
+    except (OSError, ValueError, IndexError):
+        return "could not sample decode activity — leaving the shell alone"
+
+    if after > before:
+        return "already decoding — no action needed"
+
+    restart_shell()
+    return "was paused/frozen on startup — restarted the shell to fix it"
 
 
 def preview(path: Path, blocking: bool = True) -> subprocess.Popen | None:

@@ -69,8 +69,9 @@ livewall install sync-timer [--hours N]   # periodic 'livewall sync' (default 2h
 livewall uninstall sync-timer        # stop and remove the periodic sync timer
 livewall install battery-saver [--low 15] [--high 25]   # opt-in, confirms first, see below
 livewall uninstall battery-saver     # revert the battery saver patch
-livewall install boot-fix            # auto-restart-shell ~15s after login, see below
-livewall uninstall boot-fix          # remove the boot-time auto-restart
+livewall install boot-fix            # checks ~5s after login, restarts only if actually needed, see below
+livewall uninstall boot-fix          # remove the boot-time check
+livewall ensure-playing              # run that same check right now (what boot-fix calls)
 livewall install desktop-entry       # add LiveWall to your app launcher (opt-in, confirms first)
 livewall uninstall desktop-entry     # remove it from the launcher
 ```
@@ -186,8 +187,11 @@ restores it.
   animate until the shell is restarted. This can happen on the shell's very
   *first* launch too (i.e. right after login/boot, since `caelestia shell -d`
   runs via Hyprland's own startup hook) — `livewall install boot-fix` installs
-  a systemd `--user` service that runs `restart-shell` once, ~15s after every
-  login, so you don't have to notice and fix it by hand.
+  a systemd `--user` service that runs `livewall ensure-playing` ~5s after
+  every login. That command samples decode CPU on the current video briefly
+  and only restarts the shell if it's genuinely not decoding — most boots
+  never hit the bug, so this skips the (slow) restart entirely instead of
+  paying its cost unconditionally on every login.
 - **`.gif` files never animate**, independent of the above — caelestia-aw
   only plays real video containers (`.mp4`/`.webm`/`.mkv`) via QtMultimedia;
   `.gif` always renders as a static first frame (both its Python CLI's

@@ -243,6 +243,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if all(c.ok for c in checks) else 1
 
 
+def cmd_ensure_playing(args: argparse.Namespace) -> int:
+    print(engine.ensure_playing())
+    return 0
+
+
 def cmd_preview(args: argparse.Namespace, lib: Library) -> int:
     try:
         wallpaper = lib.get(args.name)
@@ -558,6 +563,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restart the Caelestia shell (fixes a caelestia-aw pause-state init bug)",
     )
     sub.add_parser("doctor", help="Health-check caelestia-aw, timers, keybind, and the library")
+    sub.add_parser(
+        "ensure-playing",
+        help="Restart the shell only if the current video isn't actually decoding (used by boot-fix)",
+    )
 
     p_preview = sub.add_parser("preview", help="Preview a wallpaper in a normal mpv window")
     p_preview.add_argument("name")
@@ -614,6 +623,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_restart_shell(args)
     if args.command == "doctor":
         return cmd_doctor(args)
+    if args.command == "ensure-playing":
+        return cmd_ensure_playing(args)
     if args.command == "install" and args.install_target == "hyprland":
         return cmd_install_hyprland(args)
     if args.command == "install" and args.install_target == "desktop-entry":
