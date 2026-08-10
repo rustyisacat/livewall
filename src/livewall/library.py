@@ -244,8 +244,8 @@ class Library:
             q = query.lower()
             results = [w for w in results if q in w.name.lower() or any(q in t.lower() for t in w.tags)]
         if tags:
-            wanted = set(tags)
-            results = [w for w in results if wanted.issubset(set(w.tags))]
+            wanted = {t.lower() for t in tags}
+            results = [w for w in results if wanted.issubset({t.lower() for t in w.tags})]
         if kind:
             results = [w for w in results if w.kind == kind]
         if favorites_only:

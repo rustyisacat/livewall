@@ -235,6 +235,14 @@ def cmd_restart_shell(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from livewall import doctor
+
+    checks = doctor.run()
+    print(doctor.format_report(checks))
+    return 0 if all(c.ok for c in checks) else 1
+
+
 def cmd_preview(args: argparse.Namespace, lib: Library) -> int:
     try:
         wallpaper = lib.get(args.name)
@@ -549,6 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
         "restart-shell",
         help="Restart the Caelestia shell (fixes a caelestia-aw pause-state init bug)",
     )
+    sub.add_parser("doctor", help="Health-check caelestia-aw, timers, keybind, and the library")
 
     p_preview = sub.add_parser("preview", help="Preview a wallpaper in a normal mpv window")
     p_preview.add_argument("name")
@@ -603,6 +612,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_refresh_thumbs(args)
     if args.command == "restart-shell":
         return cmd_restart_shell(args)
+    if args.command == "doctor":
+        return cmd_doctor(args)
     if args.command == "install" and args.install_target == "hyprland":
         return cmd_install_hyprland(args)
     if args.command == "install" and args.install_target == "desktop-entry":

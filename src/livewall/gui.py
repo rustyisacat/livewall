@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import shutil
 import subprocess
+from pathlib import Path
 
 from textual import on
 from textual.app import App, ComposeResult
@@ -26,12 +29,16 @@ from livewall import engine
 from livewall.config import Config, RANDOM_INTERVAL_SECONDS
 from livewall.database import Wallpaper
 from livewall.engine import ApplyError, CaelestiaNotAvailableError
-from livewall.library import Library, LiveWallError, WallpaperInfo
+from livewall.library import DuplicateWallpaperError, Library, LiveWallError, WallpaperInfo
 from livewall.utils import setup_logging
 
 logger = logging.getLogger("livewall.gui")
 
 CATEGORY_TAGS = ["Cozy", "Synthwave", "Anime", "Space", "Nature", "Pixel Art", "Cyberpunk"]
+
+
+def _category_button_id(category: str) -> str:
+    return "cat-" + category.lower().replace(" ", "-")
 
 try:
     from textual_image.widget import Image as ImageWidget
@@ -212,19 +219,20 @@ class SettingsScreen(Screen):
 class WallpaperItem(ListItem):
     """One row in the library list."""
 
-    def __init__(self, wallpaper: Wallpaper) -> None:
-        super().__init__(Label(self._label(wallpaper)))
+    def __init__(self, wallpaper: Wallpaper, is_current: bool = False) -> None:
+        super().__init__(Label(self._label(wallpaper, is_current)))
         self.wallpaper_name = wallpaper.name
 
     @staticmethod
-    def _label(w: Wallpaper) -> str:
+    def _label(w: Wallpaper, is_current: bool = False) -> str:
+        current = "▶" if is_current else " "
         star = "★" if w.favorite else " "
         kind = "\U0001f3ac" if w.kind == "animated" else "\U0001f5bc"
         tags = f"  [{', '.join(w.tags)}]" if w.tags else ""
-        return f"{star} {kind} {w.name}{tags}"
+        return f"{current}{star} {kind} {w.name}{tags}"
 
-    def refresh_label(self, wallpaper: Wallpaper) -> None:
-        self.query_one(Label).update(self._label(wallpaper))
+    def refresh_label(self, wallpaper: Wallpaper, is_current: bool = False) -> None:
+        self.query_one(Label).update(self._label(wallpaper, is_current))
 
 
 class DetailPane(Vertical):
@@ -255,8 +263,10 @@ class DetailPane(Vertical):
         else:
             holder.mount(Static("[dim](no preview)[/dim]"))
 
+        current = engine.current_path()
+        is_current = current is not None and w.file_path == current
         lines = [
-            f"[bold]{w.name}[/bold]",
+            f"[bold]{w.name}[/bold]" + ("  [green]▶ currently applied[/green]" if is_current else ""),
             f"Type: {w.kind}  Favorite: {'yes' if w.favorite else 'no'}",
             f"Resolution: {info.metadata.resolution}",
             f"Aspect ratio: {info.metadata.aspect_ratio or 'unknown'}",
@@ -280,6 +290,7 @@ class LibraryScreen(Screen):
         ("r", "rename_selected", "Rename"),
         ("t", "edit_tags", "Tags"),
         ("i", "import_folder", "Import"),
+        ("o", "add_file", "Add File"),
         ("s", "open_settings", "Settings"),
     ]
 
@@ -287,18 +298,24 @@ class LibraryScreen(Screen):
     LibraryScreen #body { height: 1fr; }
     LibraryScreen #left { width: 1fr; }
     LibraryScreen #search { dock: top; }
+    LibraryScreen #category-row { height: 3; dock: top; }
+    LibraryScreen .category-btn { min-width: 3; height: 3; margin-right: 1; }
     """
 
     def __init__(self, library: Library, config: Config) -> None:
         super().__init__()
         self.library = library
         self.config = config
+        self.active_category: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="body"):
             with Vertical(id="left"):
                 yield Input(placeholder="Search name or tag...", id="search")
+                with Horizontal(id="category-row"):
+                    for category in CATEGORY_TAGS:
+                        yield Button(category, id=_category_button_id(category), classes="category-btn")
                 yield ListView(id="wall-list")
             yield DetailPane(id="detail")
         yield Footer()
@@ -309,8 +326,11 @@ class LibraryScreen(Screen):
     def refresh_list(self, query: str = "") -> None:
         list_view = self.query_one("#wall-list", ListView)
         list_view.clear()
-        for wallpaper in self.library.search(query=query):
-            list_view.append(WallpaperItem(wallpaper))
+        current = engine.current_path()
+        tags = [self.active_category] if self.active_category else None
+        for wallpaper in self.library.search(query=query, tags=tags):
+            is_current = current is not None and wallpaper.file_path == current
+            list_view.append(WallpaperItem(wallpaper, is_current=is_current))
         if list_view.children:
             list_view.index = 0
         else:
@@ -324,6 +344,24 @@ class LibraryScreen(Screen):
     @on(Input.Changed, "#search")
     def on_search_changed(self, event: Input.Changed) -> None:
         self.refresh_list(event.value)
+
+    @on(Button.Pressed, ".category-btn")
+    def on_category_button(self, event: Button.Pressed) -> None:
+        pressed_id = event.button.id or ""
+        category = next((c for c in CATEGORY_TAGS if _category_button_id(c) == pressed_id), None)
+        if category is None:
+            return
+
+        if self.active_category == category:
+            self.active_category = None
+            event.button.variant = "default"
+        else:
+            for btn in self.query(".category-btn"):
+                btn.variant = "default"
+            self.active_category = category
+            event.button.variant = "primary"
+
+        self.refresh_list(self.query_one("#search", Input).value)
 
     @on(ListView.Highlighted, "#wall-list")
     def on_highlighted(self) -> None:
@@ -418,7 +456,6 @@ class LibraryScreen(Screen):
         def handle(folder: str | None) -> None:
             if not folder:
                 return
-            from pathlib import Path
 
             result = self.library.import_folder(Path(folder))
             self.refresh_list(self.query_one("#search", Input).value)
@@ -430,6 +467,47 @@ class LibraryScreen(Screen):
 
         self.app.push_screen(TextPromptScreen("Folder to import:", "~/Pictures/Wallpapers"), handle)
 
+    def action_add_file(self) -> None:
+        self.run_worker(self._add_file_via_picker(), exclusive=True)
+
+    async def _add_file_via_picker(self) -> None:
+        if shutil.which("zenity") is None:
+            self.notify("zenity is not installed — can't open a file picker", severity="error")
+            return
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "zenity",
+                "--file-selection",
+                "--title=Add Wallpaper to LiveWall",
+                "--file-filter=Wallpapers | *.mp4 *.webm *.gif *.png *.jpg *.jpeg",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await proc.communicate()
+        except OSError as exc:
+            self.notify(f"Could not open file picker: {exc}", severity="error")
+            return
+
+        if proc.returncode != 0:
+            return  # cancelled
+
+        path_str = stdout.decode().strip()
+        if not path_str:
+            return
+
+        try:
+            wallpaper = self.library.add(Path(path_str))
+        except DuplicateWallpaperError as exc:
+            self.notify(f"Already in library as '{exc.existing.name}'", severity="warning")
+            return
+        except LiveWallError as exc:
+            self.notify(str(exc), severity="error")
+            return
+
+        self.refresh_list(self.query_one("#search", Input).value)
+        self.notify(f"Added '{wallpaper.name}' ({wallpaper.kind})")
+
     def action_open_settings(self) -> None:
         self.app.push_screen(SettingsScreen())
 
@@ -437,7 +515,9 @@ class LibraryScreen(Screen):
         list_view = self.query_one("#wall-list", ListView)
         item = list_view.highlighted_child
         if isinstance(item, WallpaperItem):
-            item.refresh_label(wallpaper)
+            current = engine.current_path()
+            is_current = current is not None and wallpaper.file_path == current
+            item.refresh_label(wallpaper, is_current=is_current)
 
 
 class LiveWallApp(App):

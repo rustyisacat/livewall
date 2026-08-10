@@ -17,6 +17,7 @@ browser, and scheduled random rotation** — then applies wallpapers by calling
 - [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw) installed and patched in
 - `ffmpeg` / `ffprobe` (thumbnailing and metadata probing)
 - `mpv` (optional, only for the standalone "preview in a window" feature)
+- `zenity` (optional, only for the GUI's native "Add File" dialog)
 - Python 3.12+, [`uv`](https://docs.astral.sh/uv/)
 
 ## Install
@@ -58,6 +59,7 @@ livewall status                      # what caelestia-aw currently has applied
 livewall preview NAME                # opens in a plain mpv window, not the desktop
 livewall refresh-thumbs              # regenerate caelestia-aw's own video thumbnail cache
 livewall restart-shell               # restart the Caelestia shell (see "Known caelestia-aw issues")
+livewall doctor                      # health-check caelestia-aw, timers, keybind, desktop entry, library
 livewall picker                      # the quick picker (see below)
 livewall gui                         # the full library browser (see below)
 livewall install hyprland            # add the Super+Shift+B picker keybind (opt-in, confirms first)
@@ -76,8 +78,13 @@ livewall uninstall desktop-entry     # remove it from the launcher
 ### GUI (`livewall gui`)
 
 A Textual app: search/filter on the left, thumbnail + metadata detail pane on
-the right. Keys: `/` search, `a` apply, `f` favorite, `p` preview, `d` delete,
-`r` rename, `t` edit tags, `i` import a folder, `s` settings.
+the right, with quick-filter buttons for the preset categories (Cozy,
+Synthwave, Anime, Space, Nature, Pixel Art, Cyberpunk — click to filter,
+click again to clear; matches tags case-insensitively). The currently-applied
+wallpaper is marked with `▶` in the list and in the detail pane. Keys: `/`
+search, `a` apply, `f` favorite, `p` preview, `d` delete, `r` rename, `t` edit
+tags, `i` import a folder, `o` add a single file via a native file-picker
+dialog (`zenity`), `s` settings.
 
 Run `livewall install desktop-entry` to make it launchable from your app
 launcher (like Caelestia's own) instead of typing the command — it's a
@@ -121,6 +128,7 @@ No giant single file — each module owns one concern:
 | `engine.py` | thin wrapper around `caelestia wallpaper -f/--extract-thumbs` and its state file — LiveWall never renders anything itself |
 | `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
 | `desktop.py` | opt-in `.desktop` entry + icon so `livewall gui` shows up in your app launcher |
+| `doctor.py` | `livewall doctor` health checks across all of the above |
 | `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix |
 | `battery.py` | opt-in `WallpaperPauser.qml` patch for battery-percentage pause (see below) |
 | `cli.py` | argparse entry point (`livewall ...`) |
