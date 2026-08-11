@@ -39,9 +39,10 @@ def ensure_dirs() -> None:
 class Config:
     """Persistent user settings, stored as JSON at ``config.json``.
 
-    Rendering, theming, HW decode, and restore-on-login are all owned by
-    caelestia-aw itself — this only holds settings for what LiveWall adds
-    on top (scheduled random rotation, its own colour-extraction opt-out).
+    ``backend`` selects which ``WallpaperBackend`` (see ``livewall.backends``)
+    renders wallpapers; everything else here is what LiveWall adds on top of
+    whichever backend is active (scheduled random rotation, its own
+    colour-extraction opt-out for caelestia-aw, battery-saver thresholds).
     """
 
     random_interval: RandomInterval = "off"
@@ -50,6 +51,7 @@ class Config:
     no_smart_colours: bool = False
     battery_saver_low: int = 15
     battery_saver_high: int = 25
+    backend: str = "caelestia-aw"
 
     @classmethod
     def load(cls) -> "Config":

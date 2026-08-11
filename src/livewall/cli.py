@@ -8,10 +8,10 @@ import random as random_module
 import sys
 from pathlib import Path
 
-from livewall import engine
+from livewall.backends import BackendApplyError, BackendUnavailableError, WallpaperBackend, get_backend
+from livewall.backends.caelestia_aw import CaelestiaAwBackend
 from livewall.config import Config
 from livewall.database import Wallpaper
-from livewall.engine import ApplyError, CaelestiaNotAvailableError
 from livewall.library import (
     DuplicateWallpaperError,
     ImportResult,
@@ -21,6 +21,7 @@ from livewall.library import (
     WallpaperNotFoundError,
     prefer_non_gif,
 )
+from livewall.preview import MpvNotAvailableError, preview as mpv_preview
 from livewall.utils import setup_logging
 
 logger = logging.getLogger("livewall.cli")
@@ -102,13 +103,16 @@ def cmd_sync(args: argparse.Namespace, lib: Library) -> int:
     return 0
 
 
-def cmd_refresh_thumbs(args: argparse.Namespace) -> int:
+def cmd_refresh_thumbs(args: argparse.Namespace, backend: WallpaperBackend) -> int:
+    if not backend.supports_thumbnail_refresh:
+        print(f"Error: refresh-thumbs is not supported by the '{backend.name}' backend", file=sys.stderr)
+        return 1
     try:
-        engine.refresh_thumbnails()
-    except (CaelestiaNotAvailableError, ApplyError) as exc:
+        backend.refresh_thumbnail_cache()
+    except (BackendUnavailableError, BackendApplyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    print("Refreshed caelestia-aw's video thumbnail cache.")
+    print(f"Refreshed the '{backend.name}' backend's thumbnail cache.")
     return 0
 
 
@@ -172,29 +176,29 @@ def cmd_info(args: argparse.Namespace, lib: Library) -> int:
     return 0
 
 
-def _apply_wallpaper(wallpaper: Wallpaper, no_smart: bool) -> int:
+def _apply_wallpaper(wallpaper: Wallpaper, no_smart: bool, backend: WallpaperBackend) -> int:
     try:
-        engine.apply(wallpaper, no_smart=no_smart)
-    except CaelestiaNotAvailableError as exc:
+        backend.set_wallpaper(wallpaper.file_path, no_smart=no_smart)
+    except BackendUnavailableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    except (FileNotFoundError, ApplyError) as exc:
+    except (FileNotFoundError, BackendApplyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     print(f"Applied '{wallpaper.name}'")
     return 0
 
 
-def cmd_apply(args: argparse.Namespace, lib: Library, config: Config) -> int:
+def cmd_apply(args: argparse.Namespace, lib: Library, config: Config, backend: WallpaperBackend) -> int:
     try:
         wallpaper = lib.get(args.name)
     except WallpaperNotFoundError:
         print(f"No such wallpaper: '{args.name}'", file=sys.stderr)
         return 1
-    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours)
+    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours, backend)
 
 
-def cmd_random(args: argparse.Namespace, lib: Library, config: Config) -> int:
+def cmd_random(args: argparse.Namespace, lib: Library, config: Config, backend: WallpaperBackend) -> int:
     tags = _split_tags(args.tag) or config.random_tags or None
     favorites_only = args.favorites or config.random_favorites_only
     candidates = prefer_non_gif(lib.search(tags=tags, favorites_only=favorites_only))
@@ -202,18 +206,18 @@ def cmd_random(args: argparse.Namespace, lib: Library, config: Config) -> int:
         print("No wallpapers match.", file=sys.stderr)
         return 1
 
-    current = engine.current_path()
+    current = backend.current_path()
     if current is not None and len(candidates) > 1:
         candidates = [w for w in candidates if w.file_path != current] or candidates
 
     wallpaper = random_module.choice(candidates)
-    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours)
+    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours, backend)
 
 
-def cmd_status(args: argparse.Namespace, lib: Library) -> int:
-    current = engine.current_path()
+def cmd_status(args: argparse.Namespace, lib: Library, backend: WallpaperBackend) -> int:
+    current = backend.current_path()
     if current is None:
-        print("No wallpaper is currently applied (or caelestia's state file is unreadable).")
+        print(f"No wallpaper is currently applied (or the '{backend.name}' backend's state is unreadable).")
         return 0
     print(f"Current: {current}")
     for wallpaper in lib.all():
@@ -225,26 +229,32 @@ def cmd_status(args: argparse.Namespace, lib: Library) -> int:
     return 0
 
 
-def cmd_restart_shell(args: argparse.Namespace) -> int:
+def cmd_restart_shell(args: argparse.Namespace, backend: WallpaperBackend) -> int:
+    if not backend.supports_restart:
+        print(f"Error: restart-shell is not supported by the '{backend.name}' backend", file=sys.stderr)
+        return 1
     try:
-        engine.restart_shell()
-    except CaelestiaNotAvailableError as exc:
+        backend.restart_render_service()
+    except BackendUnavailableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     print("Restarted the Caelestia shell.")
     return 0
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
+def cmd_doctor(args: argparse.Namespace, backend: WallpaperBackend) -> int:
     from livewall import doctor
 
-    checks = doctor.run()
+    checks = doctor.run(backend)
     print(doctor.format_report(checks))
     return 0 if all(c.ok for c in checks) else 1
 
 
-def cmd_ensure_playing(args: argparse.Namespace) -> int:
-    print(engine.ensure_playing())
+def cmd_ensure_playing(args: argparse.Namespace, backend: WallpaperBackend) -> int:
+    if not backend.supports_boot_fix:
+        print(f"Nothing to do — the '{backend.name}' backend has no boot-fix concept.")
+        return 0
+    print(backend.ensure_playing())
     return 0
 
 
@@ -255,8 +265,8 @@ def cmd_preview(args: argparse.Namespace, lib: Library) -> int:
         print(f"No such wallpaper: '{args.name}'", file=sys.stderr)
         return 1
     try:
-        engine.preview(wallpaper.file_path, blocking=True)
-    except CaelestiaNotAvailableError as exc:
+        mpv_preview(wallpaper.file_path, blocking=True)
+    except MpvNotAvailableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     return 0
@@ -422,8 +432,12 @@ def cmd_uninstall_sync_timer(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_install_battery_saver(args: argparse.Namespace, config: Config) -> int:
+def cmd_install_battery_saver(args: argparse.Namespace, config: Config, backend: WallpaperBackend) -> int:
     from livewall import battery
+
+    if not isinstance(backend, CaelestiaAwBackend):
+        print(f"Error: battery-saver requires the caelestia-aw backend (currently '{backend.name}')", file=sys.stderr)
+        return 1
 
     low = args.low if args.low is not None else config.battery_saver_low
     high = args.high if args.high is not None else config.battery_saver_high
@@ -450,22 +464,21 @@ def cmd_install_battery_saver(args: argparse.Namespace, config: Config) -> int:
     config.battery_saver_high = high
     config.save()
 
-    from livewall import engine
-
-    engine.restart_shell()
+    backend.restart_render_service()
     print("Patched and restarted the Caelestia shell.")
     return 0
 
 
-def cmd_uninstall_battery_saver(args: argparse.Namespace) -> int:
-    from livewall import battery, engine
+def cmd_uninstall_battery_saver(args: argparse.Namespace, backend: WallpaperBackend) -> int:
+    from livewall import battery
 
     if not battery.is_patched():
         print("The battery saver patch is not applied.")
         return 0
 
     if battery.unpatch():
-        engine.restart_shell()
+        if backend.supports_restart:
+            backend.restart_render_service()
         print("Reverted the patch and restarted the Caelestia shell.")
     else:
         print("No backup found to restore from.", file=sys.stderr)
@@ -473,8 +486,12 @@ def cmd_uninstall_battery_saver(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_install_boot_fix(args: argparse.Namespace) -> int:
+def cmd_install_boot_fix(args: argparse.Namespace, backend: WallpaperBackend) -> int:
     from livewall import systemd
+
+    if not backend.supports_boot_fix:
+        print(f"Error: boot-fix is not supported by the '{backend.name}' backend", file=sys.stderr)
+        return 1
 
     print(
         "This will install a systemd --user service that runs 'livewall restart-shell' "
@@ -613,18 +630,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     setup_logging(args.verbose)
 
+    # picker/gui construct their own backend internally (non-fatally, in
+    # picker's case — a bad config must never stop the Super+Shift+B window
+    # from opening), so they're dispatched before this CLI process commits to
+    # a backend of its own.
     if args.command == "picker":
         return cmd_picker(args)
     if args.command == "gui":
         return cmd_gui(args)
-    if args.command == "refresh-thumbs":
-        return cmd_refresh_thumbs(args)
-    if args.command == "restart-shell":
-        return cmd_restart_shell(args)
-    if args.command == "doctor":
-        return cmd_doctor(args)
-    if args.command == "ensure-playing":
-        return cmd_ensure_playing(args)
     if args.command == "install" and args.install_target == "hyprland":
         return cmd_install_hyprland(args)
     if args.command == "install" and args.install_target == "desktop-entry":
@@ -635,26 +648,40 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_install_sync_timer(args)
     if args.command == "uninstall" and args.uninstall_target == "sync-timer":
         return cmd_uninstall_sync_timer(args)
-    if args.command == "install" and args.install_target == "boot-fix":
-        return cmd_install_boot_fix(args)
     if args.command == "uninstall" and args.uninstall_target == "boot-fix":
         return cmd_uninstall_boot_fix(args)
 
     lib = Library()
     config = Config.load()
+    try:
+        backend = get_backend(config.backend)
+    except BackendUnavailableError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
+    if args.command == "refresh-thumbs":
+        return cmd_refresh_thumbs(args, backend)
+    if args.command == "restart-shell":
+        return cmd_restart_shell(args, backend)
+    if args.command == "doctor":
+        return cmd_doctor(args, backend)
+    if args.command == "ensure-playing":
+        return cmd_ensure_playing(args, backend)
+    if args.command == "install" and args.install_target == "boot-fix":
+        return cmd_install_boot_fix(args, backend)
     if args.command == "install" and args.install_target == "systemd":
         return cmd_install_systemd(args, config)
     if args.command == "uninstall" and args.uninstall_target == "systemd":
         return cmd_uninstall_systemd(args, config)
     if args.command == "install" and args.install_target == "battery-saver":
-        return cmd_install_battery_saver(args, config)
+        return cmd_install_battery_saver(args, config, backend)
     if args.command == "uninstall" and args.uninstall_target == "battery-saver":
-        return cmd_uninstall_battery_saver(args)
+        return cmd_uninstall_battery_saver(args, backend)
 
-    dispatch_with_config = {
-        "apply": cmd_apply,
-        "random": cmd_random,
+    dispatch_with_backend = {
+        "apply": lambda a, l: cmd_apply(a, l, config, backend),
+        "random": lambda a, l: cmd_random(a, l, config, backend),
+        "status": lambda a, l: cmd_status(a, l, backend),
     }
     dispatch_lib_only = {
         "list": cmd_list,
@@ -666,13 +693,12 @@ def main(argv: list[str] | None = None) -> int:
         "favorite": cmd_favorite,
         "tag": cmd_tag,
         "info": cmd_info,
-        "status": cmd_status,
         "preview": cmd_preview,
     }
 
     try:
-        if args.command in dispatch_with_config:
-            return dispatch_with_config[args.command](args, lib, config)
+        if args.command in dispatch_with_backend:
+            return dispatch_with_backend[args.command](args, lib)
         if args.command in dispatch_lib_only:
             return dispatch_lib_only[args.command](args, lib)
     except LiveWallError as exc:

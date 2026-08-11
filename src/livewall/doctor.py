@@ -14,7 +14,9 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from livewall import battery, desktop, engine, hypr, systemd
+from livewall import battery, desktop, hypr, systemd
+from livewall.backends import WallpaperBackend
+from livewall.backends.caelestia_aw import CaelestiaAwBackend
 from livewall.library import Library
 
 
@@ -32,11 +34,6 @@ def _systemd_active(unit: str) -> str:
     return result.stdout.strip() or "unknown"
 
 
-def _caelestia_shell_running() -> bool:
-    result = subprocess.run(["pgrep", "-x", "qs"], capture_output=True, timeout=5)
-    return result.returncode == 0
-
-
 def _picker_keybind_live() -> bool:
     try:
         result = subprocess.run(
@@ -48,26 +45,16 @@ def _picker_keybind_live() -> bool:
     return any(b.get("key", "").upper() == "B" and b.get("modmask") == 65 for b in binds)
 
 
-def run() -> list[Check]:
+def run(backend: WallpaperBackend) -> list[Check]:
     checks: list[Check] = []
 
-    # --- caelestia-aw backend ---
-    if not engine.is_available():
-        checks.append(Check("caelestia CLI", False, "'caelestia' not found on PATH"))
-    elif not engine.supports_animated():
-        checks.append(Check("caelestia CLI", False, "found, but the caelestia-aw patch isn't applied (--extract-thumbs missing)"))
-    else:
-        checks.append(Check("caelestia CLI", True, "caelestia-aw patch detected"))
-
-    checks.append(Check("caelestia shell running", _caelestia_shell_running(), "pgrep -x qs"))
-
-    current = engine.current_path()
-    if current is None:
-        checks.append(Check("current wallpaper", False, "state file unreadable/empty"))
-    elif not current.exists():
-        checks.append(Check("current wallpaper", False, f"state file points to a missing file: {current}"))
-    else:
-        checks.append(Check("current wallpaper", True, str(current)))
+    # --- configured backend ---
+    checks.append(Check(
+        f"'{backend.name}' backend", backend.is_available(),
+        "available" if backend.is_available() else f"'{backend.name}' not found",
+    ))
+    for name, ok, detail in backend.health_check():
+        checks.append(Check(name, ok, detail))
 
     # --- external tools ---
     for tool in ("ffmpeg", "ffprobe", "mpv"):
@@ -111,10 +98,18 @@ def run() -> list[Check]:
             continue
         state = _systemd_active(unit)
         ok = state in ("active", "inactive")  # oneshot services/timers idle between runs as "inactive"
-        checks.append(Check(label, ok, f"installed, systemctl state: {state}"))
+        detail = f"installed, systemctl state: {state}"
+        if label == "Boot-fix service" and not backend.supports_boot_fix:
+            detail += f" (but the '{backend.name}' backend doesn't support boot-fix)"
+        checks.append(Check(label, ok, detail))
 
     # --- battery saver patch ---
-    if not battery.is_available():
+    if not isinstance(backend, CaelestiaAwBackend):
+        checks.append(Check(
+            "Battery saver patch", True,
+            f"not applicable — requires the caelestia-aw backend (currently '{backend.name}')",
+        ))
+    elif not battery.is_available():
         checks.append(Check("Battery saver patch", True, "not applicable — WallpaperPauser.qml not found"))
     elif not battery.is_patched():
         checks.append(Check("Battery saver patch", True, "not installed (optional)"))

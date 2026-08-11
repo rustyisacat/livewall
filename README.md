@@ -1,20 +1,24 @@
 # LiveWall
 
-A wallpaper *library manager* for Hyprland + [Caelestia](https://github.com/caelestia-dots/caelestia),
-built on top of [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw).
+A wallpaper *library manager* for Hyprland, with the actual rendering done by
+a pluggable backend — [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw)
+by default, or [mpvpaper](https://github.com/GhostNaN/mpvpaper) if you're not
+running [Caelestia](https://github.com/caelestia-dots/caelestia).
 
 caelestia-aw already renders animated (mp4/webm/mkv/gif) and static wallpapers
 natively inside the Caelestia shell — its own picker, thumbnailing, Material
 You theming, battery/fullscreen pausing, and hardware decoding. LiveWall
-doesn't duplicate any of that. It adds the things caelestia-aw has no concept
-of: **tags, favorites, search, duplicate detection, a proper library
-browser, and scheduled random rotation** — then applies wallpapers by calling
-`caelestia wallpaper -f` under the hood.
+doesn't duplicate any of that. It adds the things neither backend has a
+concept of: **tags, favorites, search, duplicate detection, a proper library
+browser, and scheduled random rotation** — then applies wallpapers through
+whichever backend `config.json`'s `backend` field points to (`caelestia-aw`
+or `mpvpaper`; see [Backends](#backends) below).
 
 ## Requirements
 
 - Arch Linux, Hyprland, Wayland
-- [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw) installed and patched in
+- A wallpaper backend: [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw)
+  installed and patched in (default), or [mpvpaper](https://github.com/GhostNaN/mpvpaper)
 - `ffmpeg` / `ffprobe` (thumbnailing and metadata probing)
 - `mpv` (optional, only for the standalone "preview in a window" feature)
 - `zenity` (optional, only for the GUI's native "Add File" dialog)
@@ -53,13 +57,13 @@ livewall rename OLD NEW
 livewall favorite NAME [--unset]
 livewall tag NAME "tag1, tag2"
 livewall info NAME                   # resolution, duration, size, aspect ratio, ...
-livewall apply NAME [--no-smart]     # --no-smart skips Material You recolouring
+livewall apply NAME [--no-smart]     # --no-smart skips Material You recolouring (caelestia-aw only)
 livewall random [--tag t] [--favorites] [--no-smart]
-livewall status                      # what caelestia-aw currently has applied
+livewall status                      # what the current backend has applied
 livewall preview NAME                # opens in a plain mpv window, not the desktop
-livewall refresh-thumbs              # regenerate caelestia-aw's own video thumbnail cache
-livewall restart-shell               # restart the Caelestia shell (see "Known caelestia-aw issues")
-livewall doctor                      # health-check caelestia-aw, timers, keybind, desktop entry, library
+livewall refresh-thumbs              # regenerate caelestia-aw's own video thumbnail cache (caelestia-aw only)
+livewall restart-shell               # restart the Caelestia shell (caelestia-aw only, see "Known caelestia-aw issues")
+livewall doctor                      # health-check the active backend, timers, keybind, desktop entry, library
 livewall picker                      # the quick picker (see below)
 livewall gui                         # the full library browser (see below)
 livewall install hyprland            # add the Super+Shift+B picker keybind (opt-in, confirms first)
@@ -104,11 +108,17 @@ floating `foot` window.
 
 ### Settings
 
-`livewall gui` → `s`. LiveWall only controls what it adds on top of
-caelestia-aw: scheduled random interval, favorites-only/tag-filtered random,
-and a Material-You-recolour opt-out. Rendering, HW decode, and
-pause-on-battery/fullscreen are Caelestia's own settings — see its Nexus
-settings app.
+`livewall gui` → `s`. Besides the wallpaper backend itself, LiveWall only
+controls what it adds on top of it: scheduled random interval,
+favorites-only/tag-filtered random, and a Material-You-recolour opt-out
+(caelestia-aw only). Rendering, HW decode, and pause-on-battery/fullscreen
+under caelestia-aw are Caelestia's own settings — see its Nexus settings app.
+
+Switching "Wallpaper backend" here takes effect immediately (no restart) —
+apply a wallpaper afterward to see it render through the new backend. Some
+CLI commands are backend-specific and will say so if you run them under the
+wrong one: `restart-shell`/`refresh-thumbs`/`install battery-saver`/
+`install boot-fix` all require `caelestia-aw`.
 
 Changing "Random interval" here actually installs/removes the
 `livewall-random.timer` systemd unit to match (same as
@@ -126,7 +136,8 @@ No giant single file — each module owns one concern:
 | `database.py` | `Wallpaper` dataclass + JSON-backed CRUD store |
 | `thumbnail.py` | ffprobe metadata, ffmpeg thumbnail generation/caching |
 | `library.py` | add/remove/rename/import/search/tag/favorite/dedupe, on top of `database.py` + `thumbnail.py` |
-| `engine.py` | thin wrapper around `caelestia wallpaper -f/--extract-thumbs` and its state file — LiveWall never renders anything itself |
+| `backends/` | `WallpaperBackend` interface + `CaelestiaAwBackend`/`MpvpaperBackend` — LiveWall never renders anything itself, everything routes through whichever backend `config.json` selects |
+| `preview.py` | plain `mpv` window preview — unrelated to whichever backend is active |
 | `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
 | `desktop.py` | opt-in `.desktop` entry + icon so `livewall gui` shows up in your app launcher |
 | `doctor.py` | `livewall doctor` health checks across all of the above |
@@ -145,6 +156,26 @@ No giant single file — each module owns one concern:
 LiveWall never moves or copies your wallpaper files — the library just
 stores paths into wherever they already live (by default,
 `~/Pictures/Wallpapers`, same as caelestia-aw).
+
+## Backends
+
+LiveWall never renders a wallpaper itself — it applies through whichever
+`WallpaperBackend` `config.json`'s `backend` field names (`livewall gui` → `s`
+→ "Wallpaper backend", or hand-edit the field — any unrecognized value fails
+with a clear error rather than silently falling back to another backend).
+
+- **`caelestia-aw`** (default) — everything described in this README:
+  Material You theming, thumbnail cache, restore-on-login, the pause-state
+  workarounds below. Requires the caelestia-aw patch.
+- **`mpvpaper`** — a plain, dotfiles-independent fallback for anyone not
+  running Caelestia. No theming, no thumbnail cache, no restart/boot-fix
+  concept (those CLI commands and `install battery-saver` will refuse with a
+  clear message under this backend). LiveWall tracks the spawned `mpvpaper`
+  process itself so switching wallpapers never leaves an orphaned renderer
+  behind.
+
+Adding a third backend (swww, hyprpaper, swaybg, ...) means writing one
+`WallpaperBackend` implementation in `backends/` — no changes anywhere else.
 
 ## Battery saver
 

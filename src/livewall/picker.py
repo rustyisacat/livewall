@@ -10,9 +10,8 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.widgets import Input, ListView
 
-from livewall import engine
+from livewall.backends import BackendApplyError, BackendUnavailableError, WallpaperBackend, get_backend
 from livewall.config import Config
-from livewall.engine import ApplyError, CaelestiaNotAvailableError
 from livewall.gui import WallpaperItem
 from livewall.library import Library, LiveWallError
 from livewall.utils import setup_logging
@@ -42,6 +41,17 @@ class PickerApp(App):
         super().__init__()
         self.library = Library()
         self.config = Config.load()
+        # Backend construction must never stop this window from opening —
+        # a global hotkey that sometimes silently does nothing is worse than
+        # showing search/browse and reporting a clear error only if you try
+        # to actually apply something.
+        self.backend: WallpaperBackend | None = None
+        self.backend_error: str | None = None
+        try:
+            self.backend = get_backend(self.config.backend)
+        except BackendUnavailableError as exc:
+            self.backend_error = str(exc)
+            logger.error("Picker backend unavailable: %s", exc)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="picker-box"):
@@ -82,10 +92,18 @@ class PickerApp(App):
         if not isinstance(item, WallpaperItem):
             self.exit()
             return
+
+        if self.backend is None:
+            self.notify(self.backend_error or "No backend configured", severity="error")
+            return
+
         try:
-            engine.apply(self.library.get(item.wallpaper_name), no_smart=self.config.no_smart_colours)
-        except (CaelestiaNotAvailableError, FileNotFoundError, ApplyError, LiveWallError) as exc:
-            logger.error("Failed to apply wallpaper: %s", exc)
+            self.backend.set_wallpaper(
+                self.library.get(item.wallpaper_name).file_path, no_smart=self.config.no_smart_colours
+            )
+        except (BackendUnavailableError, FileNotFoundError, BackendApplyError, LiveWallError) as exc:
+            self.notify(str(exc), severity="error")
+            return
         self.exit()
 
     def action_cancel(self) -> None:

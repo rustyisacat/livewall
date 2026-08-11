@@ -25,11 +25,17 @@ from textual.widgets import (
     Switch,
 )
 
-from livewall import engine
+from livewall.backends import (
+    BackendApplyError,
+    BackendUnavailableError,
+    WallpaperBackend,
+    available_backend_names,
+    get_backend,
+)
 from livewall.config import Config, RANDOM_INTERVAL_SECONDS
 from livewall.database import Wallpaper
-from livewall.engine import ApplyError, CaelestiaNotAvailableError
 from livewall.library import DuplicateWallpaperError, Library, LiveWallError, WallpaperInfo
+from livewall.preview import MpvNotAvailableError, preview as mpv_preview
 from livewall.utils import setup_logging
 
 logger = logging.getLogger("livewall.gui")
@@ -156,6 +162,13 @@ class SettingsScreen(Screen):
                 "controls what it adds on top.[/dim]"
             )
             with Horizontal(classes="settings-row"):
+                yield Label("Wallpaper backend")
+                yield Select(
+                    [(n, n) for n in available_backend_names()],
+                    value=self.config.backend,
+                    id="backend",
+                )
+            with Horizontal(classes="settings-row"):
                 yield Label("Random interval")
                 yield Select(
                     [(k, k) for k in RANDOM_INTERVAL_SECONDS],
@@ -179,15 +192,28 @@ class SettingsScreen(Screen):
 
     @on(Button.Pressed, "#save")
     def save(self) -> None:
+        old_backend_name = self.config.backend
+        new_backend_name = self.query_one("#backend", Select).value
+        backend_changed = new_backend_name != old_backend_name
+
         new_interval = self.query_one("#random_interval", Select).value
         interval_changed = new_interval != self.config.random_interval
 
+        self.config.backend = new_backend_name
         self.config.random_interval = new_interval
         self.config.random_favorites_only = self.query_one("#random_favorites_only", Switch).value
         raw_tags = self.query_one("#random_tags", Input).value
         self.config.random_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         self.config.no_smart_colours = self.query_one("#no_smart_colours", Switch).value
         self.config.save()
+
+        if backend_changed:
+            try:
+                get_backend(old_backend_name).stop()
+            except Exception as exc:
+                self.notify(f"Couldn't cleanly stop the previous backend: {exc}", severity="warning")
+            self.app.backend = get_backend(new_backend_name)
+            self.notify(f"Switched to '{new_backend_name}'. Re-apply a wallpaper to activate it.")
 
         if interval_changed:
             from livewall import systemd
@@ -263,7 +289,7 @@ class DetailPane(Vertical):
         else:
             holder.mount(Static("[dim](no preview)[/dim]"))
 
-        current = engine.current_path()
+        current = self.app.backend.current_path()
         is_current = current is not None and w.file_path == current
         lines = [
             f"[bold]{w.name}[/bold]" + ("  [green]▶ currently applied[/green]" if is_current else ""),
@@ -326,7 +352,7 @@ class LibraryScreen(Screen):
     def refresh_list(self, query: str = "") -> None:
         list_view = self.query_one("#wall-list", ListView)
         list_view.clear()
-        current = engine.current_path()
+        current = self.app.backend.current_path()
         tags = [self.active_category] if self.active_category else None
         for wallpaper in self.library.search(query=query, tags=tags):
             is_current = current is not None and wallpaper.file_path == current
@@ -377,11 +403,13 @@ class LibraryScreen(Screen):
         if not name:
             return
         try:
-            engine.apply(self.library.get(name), no_smart=self.config.no_smart_colours)
-        except CaelestiaNotAvailableError:
-            self.notify("caelestia is not installed", severity="error")
+            self.app.backend.set_wallpaper(
+                self.library.get(name).file_path, no_smart=self.config.no_smart_colours
+            )
+        except BackendUnavailableError as exc:
+            self.notify(str(exc), severity="error")
             return
-        except (FileNotFoundError, ApplyError, LiveWallError) as exc:
+        except (FileNotFoundError, BackendApplyError, LiveWallError) as exc:
             self.notify(str(exc), severity="error")
             return
         self.notify(f"Applied '{name}'")
@@ -400,8 +428,8 @@ class LibraryScreen(Screen):
             return
         wallpaper = self.library.get(name)
         try:
-            engine.preview(wallpaper.file_path, blocking=False)
-        except CaelestiaNotAvailableError:
+            mpv_preview(wallpaper.file_path, blocking=False)
+        except MpvNotAvailableError:
             self.notify("mpv is not installed", severity="error")
             return
         self.notify(f"Previewing '{name}' in mpv")
@@ -515,7 +543,7 @@ class LibraryScreen(Screen):
         list_view = self.query_one("#wall-list", ListView)
         item = list_view.highlighted_child
         if isinstance(item, WallpaperItem):
-            current = engine.current_path()
+            current = self.app.backend.current_path()
             is_current = current is not None and wallpaper.file_path == current
             item.refresh_label(wallpaper, is_current=is_current)
 
@@ -525,10 +553,11 @@ class LiveWallApp(App):
 
     TITLE = "LiveWall"
 
-    def __init__(self) -> None:
+    def __init__(self, backend: WallpaperBackend) -> None:
         super().__init__()
         self.library = Library()
         self.config = Config.load()
+        self.backend = backend
 
     def on_mount(self) -> None:
         self.push_screen(LibraryScreen(self.library, self.config))
@@ -536,7 +565,13 @@ class LiveWallApp(App):
 
 def run() -> None:
     setup_logging()
-    LiveWallApp().run()
+    config = Config.load()
+    try:
+        backend = get_backend(config.backend)
+    except BackendUnavailableError as exc:
+        print(f"Error: {exc}")
+        raise SystemExit(1) from exc
+    LiveWallApp(backend).run()
 
 
 if __name__ == "__main__":
