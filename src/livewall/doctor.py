@@ -14,7 +14,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from livewall import battery, desktop, hypr, systemd
+from livewall import battery, desktop, hypr, power_saver, systemd
 from livewall.backends import WallpaperBackend
 from livewall.backends.caelestia_aw import CaelestiaAwBackend
 from livewall.library import Library
@@ -92,6 +92,7 @@ def run(backend: WallpaperBackend) -> list[Check]:
         ("Random-rotation timer", systemd.is_installed(), systemd.TIMER_NAME),
         ("Sync timer", systemd.is_sync_installed(), systemd.SYNC_TIMER_NAME),
         ("Boot-fix service", systemd.is_boot_fix_installed(), systemd.BOOT_FIX_SERVICE_NAME),
+        ("Power-saver timer", systemd.is_power_saver_installed(), systemd.POWER_SAVER_TIMER_NAME),
     ):
         if not installed:
             checks.append(Check(label, True, "not installed (optional)"))
@@ -103,18 +104,26 @@ def run(backend: WallpaperBackend) -> list[Check]:
             detail += f" (but the '{backend.name}' backend doesn't support boot-fix)"
         checks.append(Check(label, ok, detail))
 
-    # --- battery saver patch ---
-    if not isinstance(backend, CaelestiaAwBackend):
-        checks.append(Check(
-            "Battery saver patch", True,
-            f"not applicable — requires the caelestia-aw backend (currently '{backend.name}')",
-        ))
-    elif not battery.is_available():
-        checks.append(Check("Battery saver patch", True, "not applicable — WallpaperPauser.qml not found"))
-    elif not battery.is_patched():
-        checks.append(Check("Battery saver patch", True, "not installed (optional)"))
+    # --- battery saver: QML patch (caelestia-aw) or timer (capability-based backends) ---
+    if isinstance(backend, CaelestiaAwBackend):
+        if not battery.is_available():
+            checks.append(Check("Battery saver patch", True, "not applicable — WallpaperPauser.qml not found"))
+        elif not battery.is_patched():
+            checks.append(Check("Battery saver patch", True, "not installed (optional)"))
+        else:
+            checks.append(Check("Battery saver patch", True, "applied"))
+    elif backend.supports_pause and backend.supports_resume:
+        if not power_saver.is_available():
+            checks.append(Check("Battery saver timer", True, "not applicable — no battery detected"))
+        elif not systemd.is_power_saver_installed():
+            checks.append(Check("Battery saver timer", True, "not installed (optional)"))
+        else:
+            checks.append(Check("Battery saver timer", True, "installed"))
     else:
-        checks.append(Check("Battery saver patch", True, "applied"))
+        checks.append(Check(
+            "Battery saver", True,
+            f"not applicable — the '{backend.name}' backend doesn't support pause/resume",
+        ))
 
     return checks
 

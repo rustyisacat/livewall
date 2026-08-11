@@ -258,6 +258,13 @@ def cmd_ensure_playing(args: argparse.Namespace, backend: WallpaperBackend) -> i
     return 0
 
 
+def cmd_power_check(args: argparse.Namespace, config: Config, backend: WallpaperBackend) -> int:
+    from livewall import power_saver
+
+    print(power_saver.check(backend, config.battery_saver_low, config.battery_saver_high))
+    return 0
+
+
 def cmd_preview(args: argparse.Namespace, lib: Library) -> int:
     try:
         wallpaper = lib.get(args.name)
@@ -433,56 +440,90 @@ def cmd_uninstall_sync_timer(args: argparse.Namespace) -> int:
 
 
 def cmd_install_battery_saver(args: argparse.Namespace, config: Config, backend: WallpaperBackend) -> int:
-    from livewall import battery
-
-    if not isinstance(backend, CaelestiaAwBackend):
-        print(f"Error: battery-saver requires the caelestia-aw backend (currently '{backend.name}')", file=sys.stderr)
-        return 1
-
     low = args.low if args.low is not None else config.battery_saver_low
     high = args.high if args.high is not None else config.battery_saver_high
     if low >= high:
         print(f"Error: low ({low}) must be less than high ({high})", file=sys.stderr)
         return 1
-    if not battery.is_available():
-        print(f"Error: {battery.WALLPAPER_PAUSER_FILE} not found", file=sys.stderr)
-        return 1
 
-    print(
-        f"This will patch {battery.WALLPAPER_PAUSER_FILE} (backed up first, to "
-        f"{battery.WALLPAPER_PAUSER_FILE.with_suffix('.qml.livewall.bak')}) so caelestia-aw "
-        f"pauses the live wallpaper frame at <= {low}% battery and resumes it at >= {high}%, "
-        f"purely by percentage — independent of AC status."
-    )
-    reply = input("Apply this patch now? [y/N] ").strip().lower()
-    if reply != "y":
-        print("Skipped.")
-        return 1
+    if isinstance(backend, CaelestiaAwBackend):
+        from livewall import battery
 
-    battery.patch(low, high)
-    config.battery_saver_low = low
-    config.battery_saver_high = high
-    config.save()
+        if not battery.is_available():
+            print(f"Error: {battery.WALLPAPER_PAUSER_FILE} not found", file=sys.stderr)
+            return 1
 
-    backend.restart_render_service()
-    print("Patched and restarted the Caelestia shell.")
-    return 0
+        print(
+            f"This will patch {battery.WALLPAPER_PAUSER_FILE} (backed up first, to "
+            f"{battery.WALLPAPER_PAUSER_FILE.with_suffix('.qml.livewall.bak')}) so caelestia-aw "
+            f"pauses the live wallpaper frame at <= {low}% battery and resumes it at >= {high}%, "
+            f"purely by percentage — independent of AC status."
+        )
+        reply = input("Apply this patch now? [y/N] ").strip().lower()
+        if reply != "y":
+            print("Skipped.")
+            return 1
+
+        battery.patch(low, high)
+        config.battery_saver_low = low
+        config.battery_saver_high = high
+        config.save()
+
+        backend.restart_render_service()
+        print("Patched and restarted the Caelestia shell.")
+        return 0
+
+    if backend.supports_pause and backend.supports_resume:
+        from livewall import power_saver, systemd
+
+        if not power_saver.is_available():
+            print("Error: no battery detected on this machine", file=sys.stderr)
+            return 1
+
+        print(
+            f"This will install a systemd --user timer that checks battery percentage every "
+            f"{systemd.POWER_SAVER_INTERVAL_SECONDS}s and pauses the live wallpaper (freezing "
+            f"the current frame via the '{backend.name}' backend's own pause/resume, not a "
+            f"patch) at <= {low}% battery, resuming at >= {high}%."
+        )
+        reply = input("Install and enable it now? [y/N] ").strip().lower()
+        if reply != "y":
+            print("Skipped.")
+            return 1
+
+        config.battery_saver_low = low
+        config.battery_saver_high = high
+        config.save()
+        systemd.install_power_saver()
+        print(f"Installed and enabled {systemd.POWER_SAVER_TIMER_NAME}.")
+        return 0
+
+    print(f"Error: the '{backend.name}' backend doesn't support battery-saving", file=sys.stderr)
+    return 1
 
 
 def cmd_uninstall_battery_saver(args: argparse.Namespace, backend: WallpaperBackend) -> int:
-    from livewall import battery
+    from livewall import battery, systemd
 
-    if not battery.is_patched():
-        print("The battery saver patch is not applied.")
-        return 0
+    did_something = False
 
-    if battery.unpatch():
-        if backend.supports_restart:
-            backend.restart_render_service()
-        print("Reverted the patch and restarted the Caelestia shell.")
-    else:
-        print("No backup found to restore from.", file=sys.stderr)
-        return 1
+    if battery.is_available() and battery.is_patched():
+        if battery.unpatch():
+            if backend.supports_restart:
+                backend.restart_render_service()
+            print("Reverted the patch and restarted the Caelestia shell.")
+            did_something = True
+        else:
+            print("No backup found to restore from.", file=sys.stderr)
+            return 1
+
+    if systemd.is_power_saver_installed():
+        systemd.uninstall_power_saver()
+        print(f"Stopped and removed {systemd.POWER_SAVER_TIMER_NAME}.")
+        did_something = True
+
+    if not did_something:
+        print("The battery saver is not installed.")
     return 0
 
 
@@ -584,6 +625,10 @@ def build_parser() -> argparse.ArgumentParser:
         "ensure-playing",
         help="Restart the shell only if the current video isn't actually decoding (used by boot-fix)",
     )
+    sub.add_parser(
+        "power-check",
+        help="One hysteresis check-and-act cycle for battery-based pause/resume (used by the power-saver timer)",
+    )
 
     p_preview = sub.add_parser("preview", help="Preview a wallpaper in a normal mpv window")
     p_preview.add_argument("name")
@@ -618,7 +663,7 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall_sub = p_uninstall.add_subparsers(dest="uninstall_target", required=True)
     uninstall_sub.add_parser("systemd", help="Stop and remove the random-rotation timer")
     uninstall_sub.add_parser("sync-timer", help="Stop and remove the periodic sync timer")
-    uninstall_sub.add_parser("battery-saver", help="Revert the battery saver patch")
+    uninstall_sub.add_parser("battery-saver", help="Revert the battery saver (QML patch or timer, whichever is installed)")
     uninstall_sub.add_parser("boot-fix", help="Remove the boot-time auto-restart")
     uninstall_sub.add_parser("desktop-entry", help="Remove LiveWall from your app launcher")
 
@@ -667,6 +712,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_doctor(args, backend)
     if args.command == "ensure-playing":
         return cmd_ensure_playing(args, backend)
+    if args.command == "power-check":
+        return cmd_power_check(args, config, backend)
     if args.command == "install" and args.install_target == "boot-fix":
         return cmd_install_boot_fix(args, backend)
     if args.command == "install" and args.install_target == "systemd":

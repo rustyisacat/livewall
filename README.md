@@ -72,10 +72,11 @@ livewall uninstall systemd           # stop and remove the random-rotation timer
 livewall install sync-timer [--hours N]   # periodic 'livewall sync' (default 2h, opt-in, confirms first)
 livewall uninstall sync-timer        # stop and remove the periodic sync timer
 livewall install battery-saver [--low 15] [--high 25]   # opt-in, confirms first, see below
-livewall uninstall battery-saver     # revert the battery saver patch
+livewall uninstall battery-saver     # revert the battery saver (patch or timer, whichever backend)
 livewall install boot-fix            # checks ~5s after login, restarts only if actually needed, see below
 livewall uninstall boot-fix          # remove the boot-time check
 livewall ensure-playing              # run that same check right now (what boot-fix calls)
+livewall power-check                 # one battery-saver check-and-act cycle (what its timer calls, mpvpaper/capability-based backends only)
 livewall install desktop-entry       # add LiveWall to your app launcher (opt-in, confirms first)
 livewall uninstall desktop-entry     # remove it from the launcher
 ```
@@ -117,8 +118,9 @@ under caelestia-aw are Caelestia's own settings — see its Nexus settings app.
 Switching "Wallpaper backend" here takes effect immediately (no restart) —
 apply a wallpaper afterward to see it render through the new backend. Some
 CLI commands are backend-specific and will say so if you run them under the
-wrong one: `restart-shell`/`refresh-thumbs`/`install battery-saver`/
-`install boot-fix` all require `caelestia-aw`.
+wrong one: `restart-shell`/`refresh-thumbs`/`install boot-fix` all require
+`caelestia-aw`. `install battery-saver` works under either backend, just
+through a different mechanism for each — see [Battery saver](#battery-saver).
 
 Changing "Random interval" here actually installs/removes the
 `livewall-random.timer` systemd unit to match (same as
@@ -141,8 +143,9 @@ No giant single file — each module owns one concern:
 | `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
 | `desktop.py` | opt-in `.desktop` entry + icon so `livewall gui` shows up in your app launcher |
 | `doctor.py` | `livewall doctor` health checks across all of the above |
-| `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix |
-| `battery.py` | opt-in `WallpaperPauser.qml` patch for battery-percentage pause (see below) |
+| `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix, battery-saver timer |
+| `battery.py` | opt-in `WallpaperPauser.qml` patch for battery-percentage pause, caelestia-aw only (see below) |
+| `power_saver.py` | backend-agnostic battery-percentage pause/resume, for any backend with `supports_pause`/`supports_resume` (currently mpvpaper) — see below |
 | `cli.py` | argparse entry point (`livewall ...`) |
 | `gui.py` | Textual library browser |
 | `picker.py` | Textual quick picker |
@@ -169,15 +172,45 @@ with a clear error rather than silently falling back to another backend).
   workarounds below. Requires the caelestia-aw patch.
 - **`mpvpaper`** — a plain, dotfiles-independent fallback for anyone not
   running Caelestia. No theming, no thumbnail cache, no restart/boot-fix
-  concept (those CLI commands and `install battery-saver` will refuse with a
-  clear message under this backend). LiveWall tracks the spawned `mpvpaper`
-  process itself so switching wallpapers never leaves an orphaned renderer
-  behind.
+  concept (those CLI commands will refuse with a clear message under this
+  backend). LiveWall tracks the spawned `mpvpaper` process itself so
+  switching wallpapers never leaves an orphaned renderer behind, and talks
+  to the underlying `mpv` process over its JSON IPC socket
+  (`--input-ipc-server`, set automatically) for real pause/resume —
+  `install battery-saver` works under this backend too, via
+  `power_saver.py`'s systemd timer instead of a QML patch.
 
 Adding a third backend (swww, hyprpaper, swaybg, ...) means writing one
 `WallpaperBackend` implementation in `backends/` — no changes anywhere else.
 
 ## Battery saver
+
+`livewall install battery-saver [--low 15] [--high 25]` works under either
+backend, but through a genuinely different mechanism — pick the section
+below for whichever `config.json`'s `backend` is currently set to.
+
+### Under `mpvpaper`
+
+mpv doesn't know or care about system battery state, so there's no internal
+hook to extend the way caelestia-aw has one (below). Instead, `install
+battery-saver` installs a systemd `--user` timer
+(`livewall-power-saver.timer`, every 20s) that runs `livewall power-check`
+— a single hysteresis check-and-act cycle in `power_saver.py`: reads the
+first battery under `/sys/class/power_supply/*/capacity` (skips cleanly, no
+error, on a desktop with no battery), and calls the backend's real
+`pause()`/`resume()` (mpv's `set_property pause`, over the same IPC socket
+`set_wallpaper()` already opens) when the configured thresholds are
+crossed. Hysteresis state persists in `~/.cache/livewall/
+power_saver_state.json` between timer runs, since each firing is a fresh
+process. `livewall doctor` reports this as "Battery saver timer"; `livewall
+uninstall battery-saver` stops and removes it.
+
+This mechanism isn't hardcoded to mpvpaper — it drives any backend through
+`WallpaperBackend.pause()`/`resume()`, gated on the `supports_pause`/
+`supports_resume` capability flags, so a future backend gets battery-saving
+for free just by implementing those two methods honestly.
+
+### Under `caelestia-aw`
 
 caelestia-aw's own `WallpaperPauser` only knows "on AC or not" — no
 percentage threshold — and exposes no pause/resume IPC for wallpapers at all

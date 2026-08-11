@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 MPVPAPER_BIN = "mpvpaper"
 STATE_FILE = CACHE_DIR / "mpvpaper_state.json"
+IPC_SOCKET = CACHE_DIR / "mpvpaper.sock"
 
 # mpv handles gifs fine via loop-file, so they get the same looping options as
 # real video containers rather than a hardcoded per-extension special case.
@@ -36,6 +38,7 @@ _MPV_OPTS_STATIC = "image-display-duration=inf no-audio"
 _STARTUP_CHECK_SECONDS = 0.4
 _STOP_GRACE_SECONDS = 1.0
 _STOP_POLL_INTERVAL = 0.1
+_IPC_TIMEOUT_SECONDS = 2.0
 
 
 @register
@@ -46,8 +49,8 @@ class MpvpaperBackend(WallpaperBackend):
     supports_static_images = True
     supports_audio = True
     supports_multi_monitor = True  # same clip on every output via mpvpaper's "ALL" target
-    supports_pause = False
-    supports_resume = False
+    supports_pause = True
+    supports_resume = True
     supports_restart = False
     supports_thumbnail_refresh = False
     supports_boot_fix = False
@@ -67,6 +70,7 @@ class MpvpaperBackend(WallpaperBackend):
 
     def _clear_state(self) -> None:
         STATE_FILE.unlink(missing_ok=True)
+        IPC_SOCKET.unlink(missing_ok=True)
 
     def _pid_alive(self, pid: int) -> bool:
         try:
@@ -122,6 +126,12 @@ class MpvpaperBackend(WallpaperBackend):
         self.stop()
 
         opts = _MPV_OPTS_LOOPING if path.suffix.lower() in _LOOPING_EXTENSIONS else _MPV_OPTS_STATIC
+        # A JSON IPC socket, forwarded straight through to the underlying mpv
+        # process (mpvpaper just passes -o options along) — this is what
+        # pause()/resume() below talk to. mpv unlinks and rebinds a stale
+        # socket file on its own; _clear_state() also removes it on our side
+        # so a dead process never leaves a stale path a new one could race.
+        opts = f"{opts} input-ipc-server={IPC_SOCKET}"
         cmd = [MPVPAPER_BIN, "--layer", "background", "-o", opts, "ALL", str(path)]
         logger.info("Applying via mpvpaper: %s", " ".join(cmd))
         try:
@@ -140,6 +150,48 @@ class MpvpaperBackend(WallpaperBackend):
             )
 
         self._write_state(proc.pid, path)
+
+    def _mpv_ipc(self, command: list) -> dict | None:
+        """Sends one JSON IPC command to the running mpv process and returns
+        its reply, or None if there's nothing running / the socket isn't
+        reachable — callers treat that as "nothing to do" rather than an
+        error, since pause/resume against an already-stopped wallpaper is a
+        no-op, not a failure."""
+        if not self.is_running():
+            return None
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(_IPC_TIMEOUT_SECONDS)
+                sock.connect(str(IPC_SOCKET))
+                sock.sendall((json.dumps({"command": command}) + "\n").encode())
+                buf = b""
+                while not buf.endswith(b"\n"):
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+        except OSError as exc:
+            logger.warning("mpv IPC command %s failed: %s", command, exc)
+            return None
+        try:
+            return json.loads(buf)
+        except json.JSONDecodeError:
+            return None
+
+    def pause(self) -> None:
+        self._mpv_ipc(["set_property", "pause", True])
+
+    def resume(self) -> None:
+        self._mpv_ipc(["set_property", "pause", False])
+
+    def is_paused(self) -> bool | None:
+        """True/False if known, None if there's nothing running to ask —
+        used by power_saver.py to avoid sending a redundant pause/resume
+        and by `livewall status`/`doctor` for reporting."""
+        response = self._mpv_ipc(["get_property", "pause"])
+        if response is None or "data" not in response:
+            return None
+        return bool(response["data"])
 
     def health_check(self) -> list[tuple[str, bool, str]]:
         checks: list[tuple[str, bool, str]] = []

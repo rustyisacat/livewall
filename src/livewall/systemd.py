@@ -178,3 +178,54 @@ def uninstall_boot_fix() -> None:
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
 
 
+POWER_SAVER_SERVICE_NAME = "livewall-power-saver.service"
+POWER_SAVER_TIMER_NAME = "livewall-power-saver.timer"
+POWER_SAVER_SERVICE_FILE = UNIT_DIR / POWER_SAVER_SERVICE_NAME
+POWER_SAVER_TIMER_FILE = UNIT_DIR / POWER_SAVER_TIMER_NAME
+POWER_SAVER_INTERVAL_SECONDS = 20
+
+
+def render_power_saver_service() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Check battery percentage and pause/resume the live wallpaper\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        f"ExecStart={_livewall_bin()} power-check\n"
+    )
+
+
+def render_power_saver_timer() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Periodically check battery percentage for the live wallpaper\n\n"
+        "[Timer]\n"
+        f"OnBootSec={POWER_SAVER_INTERVAL_SECONDS}\n"
+        f"OnUnitActiveSec={POWER_SAVER_INTERVAL_SECONDS}\n"
+        "Persistent=false\n\n"
+        "[Install]\n"
+        "WantedBy=timers.target\n"
+    )
+
+
+def is_power_saver_installed() -> bool:
+    return POWER_SAVER_SERVICE_FILE.exists() and POWER_SAVER_TIMER_FILE.exists()
+
+
+def install_power_saver() -> None:
+    UNIT_DIR.mkdir(parents=True, exist_ok=True)
+    POWER_SAVER_SERVICE_FILE.write_text(render_power_saver_service())
+    POWER_SAVER_TIMER_FILE.write_text(render_power_saver_timer())
+    logger.info("Wrote %s and %s", POWER_SAVER_SERVICE_FILE, POWER_SAVER_TIMER_FILE)
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", POWER_SAVER_TIMER_NAME], check=True)
+
+
+def uninstall_power_saver() -> None:
+    subprocess.run(["systemctl", "--user", "disable", "--now", POWER_SAVER_TIMER_NAME], capture_output=True)
+    POWER_SAVER_SERVICE_FILE.unlink(missing_ok=True)
+    POWER_SAVER_TIMER_FILE.unlink(missing_ok=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+
+
