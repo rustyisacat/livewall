@@ -87,10 +87,21 @@ class MpvpaperBackend(WallpaperBackend):
         if state is None:
             return None
         if not self._pid_alive(state["pid"]):
-            # Process died or was killed externally — self-heal the stale entry.
-            self._clear_state()
+            # Process died, was killed externally, or this is a fresh boot —
+            # report "nothing currently rendering" but deliberately leave the
+            # state file alone. Deleting it here would destroy the path
+            # last_applied_path() needs for restore-on-boot; it only gets
+            # cleared by an explicit stop() or overwritten by the next
+            # successful set_wallpaper().
             return None
         return Path(state["path"])
+
+    def last_applied_path(self) -> Path | None:
+        # Deliberately skips the liveness check current_path() does — right
+        # after a reboot the tracked PID is legitimately gone, but the path
+        # itself is still the thing to restore, not something to self-heal away.
+        state = self._read_state()
+        return Path(state["path"]) if state is not None else None
 
     def stop(self) -> None:
         state = self._read_state()

@@ -40,6 +40,10 @@ class WallpaperBackend(ABC):
     supports_restart: ClassVar[bool] = False
     supports_thumbnail_refresh: ClassVar[bool] = False
     supports_boot_fix: ClassVar[bool] = False
+    # Whether this backend already re-applies the last wallpaper on login by
+    # itself (e.g. by watching a state file its own shell reads on startup).
+    # False means LiveWall needs to do that explicitly — see last_applied_path().
+    restores_on_login: ClassVar[bool] = False
 
     @abstractmethod
     def is_available(self) -> bool:
@@ -64,6 +68,12 @@ class WallpaperBackend(ABC):
     def health_check(self) -> list[tuple[str, bool, str]]:
         """Backend-specific rows for ``livewall doctor``: (name, ok, detail)."""
         return []
+
+    def last_applied_path(self) -> Path | None:
+        """What was last applied, even if nothing is currently running (e.g.
+        right after a reboot). Defaults to current_path(); override this if
+        that's tied to a live process rather than durable state."""
+        return self.current_path()
 
     # Capability-gated: only call these after checking the matching flag above.
     def pause(self) -> None:

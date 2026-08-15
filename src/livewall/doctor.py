@@ -93,15 +93,25 @@ def run(backend: WallpaperBackend) -> list[Check]:
         ("Sync timer", systemd.is_sync_installed(), systemd.SYNC_TIMER_NAME),
         ("Boot-fix service", systemd.is_boot_fix_installed(), systemd.BOOT_FIX_SERVICE_NAME),
         ("Power-saver timer", systemd.is_power_saver_installed(), systemd.POWER_SAVER_TIMER_NAME),
+        ("Restore-on-boot service", systemd.is_restore_installed(), systemd.RESTORE_SERVICE_NAME),
     ):
         if not installed:
-            checks.append(Check(label, True, "not installed (optional)"))
+            if label == "Restore-on-boot service" and not backend.restores_on_login:
+                checks.append(Check(
+                    label, False,
+                    f"not installed — the '{backend.name}' backend won't restore your "
+                    "wallpaper on login without it. Run 'livewall install restore-on-boot'",
+                ))
+            else:
+                checks.append(Check(label, True, "not installed (optional)"))
             continue
         state = _systemd_active(unit)
         ok = state in ("active", "inactive")  # oneshot services/timers idle between runs as "inactive"
         detail = f"installed, systemctl state: {state}"
         if label == "Boot-fix service" and not backend.supports_boot_fix:
             detail += f" (but the '{backend.name}' backend doesn't support boot-fix)"
+        if label == "Restore-on-boot service" and backend.restores_on_login:
+            detail += f" (harmless no-op — the '{backend.name}' backend already restores itself)"
         checks.append(Check(label, ok, detail))
 
     # --- battery saver: QML patch (caelestia-aw) or timer (capability-based backends) ---

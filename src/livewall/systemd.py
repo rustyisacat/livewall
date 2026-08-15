@@ -178,6 +178,50 @@ def uninstall_boot_fix() -> None:
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
 
 
+RESTORE_SERVICE_NAME = "livewall-restore.service"
+RESTORE_SERVICE_FILE = UNIT_DIR / RESTORE_SERVICE_NAME
+RESTORE_DELAY_SECONDS = 3
+
+
+def render_restore_service() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Re-apply the last LiveWall wallpaper on login, for backends "
+        "that don't restore it themselves\n"
+        "After=graphical-session.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        # Mirrors boot-fix: a backend's set_wallpaper() can fork a detached
+        # renderer (e.g. mpvpaper) that doesn't escape this service's cgroup —
+        # the default KillMode=control-group would kill it the moment this
+        # oneshot's ExecStart exits. KillMode=none leaves it running.
+        "KillMode=none\n"
+        f"ExecStartPre=/usr/bin/sleep {RESTORE_DELAY_SECONDS}\n"
+        f"ExecStart={_livewall_bin()} restore\n\n"
+        "[Install]\n"
+        "WantedBy=graphical-session.target\n"
+    )
+
+
+def is_restore_installed() -> bool:
+    return RESTORE_SERVICE_FILE.exists()
+
+
+def install_restore_service() -> None:
+    UNIT_DIR.mkdir(parents=True, exist_ok=True)
+    RESTORE_SERVICE_FILE.write_text(render_restore_service())
+    logger.info("Wrote %s", RESTORE_SERVICE_FILE)
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", RESTORE_SERVICE_NAME], check=True)
+
+
+def uninstall_restore_service() -> None:
+    subprocess.run(["systemctl", "--user", "disable", RESTORE_SERVICE_NAME], capture_output=True)
+    RESTORE_SERVICE_FILE.unlink(missing_ok=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+
+
 POWER_SAVER_SERVICE_NAME = "livewall-power-saver.service"
 POWER_SAVER_TIMER_NAME = "livewall-power-saver.timer"
 POWER_SAVER_SERVICE_FILE = UNIT_DIR / POWER_SAVER_SERVICE_NAME

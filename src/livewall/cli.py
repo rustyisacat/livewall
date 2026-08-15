@@ -258,6 +258,28 @@ def cmd_ensure_playing(args: argparse.Namespace, backend: WallpaperBackend) -> i
     return 0
 
 
+def cmd_restore(args: argparse.Namespace, backend: WallpaperBackend) -> int:
+    if backend.restores_on_login:
+        print(f"Nothing to do — the '{backend.name}' backend restores its own wallpaper on login.")
+        return 0
+
+    path = backend.last_applied_path()
+    if path is None:
+        print("No previously applied wallpaper to restore.")
+        return 0
+    if not path.exists():
+        print(f"Error: last wallpaper file is missing: {path}", file=sys.stderr)
+        return 1
+
+    try:
+        backend.set_wallpaper(path)
+    except (BackendUnavailableError, BackendApplyError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Restored wallpaper: {path}")
+    return 0
+
+
 def cmd_power_check(args: argparse.Namespace, config: Config, backend: WallpaperBackend) -> int:
     from livewall import power_saver
 
@@ -563,6 +585,38 @@ def cmd_uninstall_boot_fix(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_restore_on_boot(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    print(
+        "This will install a systemd --user service that re-applies your last "
+        f"wallpaper {systemd.RESTORE_DELAY_SECONDS}s after every login — only does "
+        "anything under backends that don't already restore themselves (mpvpaper; "
+        "caelestia-aw already handles this on its own, so it's a harmless no-op there):"
+    )
+    print(f"\n  {systemd.RESTORE_SERVICE_FILE}\n{systemd.render_restore_service()}")
+    reply = input("Install and enable it now? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    systemd.install_restore_service()
+    print(f"Installed and enabled {systemd.RESTORE_SERVICE_NAME}.")
+    return 0
+
+
+def cmd_uninstall_restore_on_boot(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    if not systemd.is_restore_installed():
+        print("The restore-on-boot service is not installed.")
+        return 0
+
+    systemd.uninstall_restore_service()
+    print(f"Stopped and removed {systemd.RESTORE_SERVICE_NAME}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -629,6 +683,10 @@ def build_parser() -> argparse.ArgumentParser:
         "power-check",
         help="One hysteresis check-and-act cycle for battery-based pause/resume (used by the power-saver timer)",
     )
+    sub.add_parser(
+        "restore",
+        help="Re-apply the last wallpaper (no-op under backends that already restore themselves; used by restore-on-boot)",
+    )
 
     p_preview = sub.add_parser("preview", help="Preview a wallpaper in a normal mpv window")
     p_preview.add_argument("name")
@@ -658,6 +716,10 @@ def build_parser() -> argparse.ArgumentParser:
         "boot-fix",
         help="Auto-restart the shell shortly after login to work around a caelestia-aw pause-state bug",
     )
+    install_sub.add_parser(
+        "restore-on-boot",
+        help="Re-apply your last wallpaper on login (needed for mpvpaper; harmless no-op under caelestia-aw)",
+    )
 
     p_uninstall = sub.add_parser("uninstall", help="Remove optional integrations")
     uninstall_sub = p_uninstall.add_subparsers(dest="uninstall_target", required=True)
@@ -665,6 +727,7 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall_sub.add_parser("sync-timer", help="Stop and remove the periodic sync timer")
     uninstall_sub.add_parser("battery-saver", help="Revert the battery saver (QML patch or timer, whichever is installed)")
     uninstall_sub.add_parser("boot-fix", help="Remove the boot-time auto-restart")
+    uninstall_sub.add_parser("restore-on-boot", help="Remove the login wallpaper-restore service")
     uninstall_sub.add_parser("desktop-entry", help="Remove LiveWall from your app launcher")
 
     return parser
@@ -695,6 +758,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_uninstall_sync_timer(args)
     if args.command == "uninstall" and args.uninstall_target == "boot-fix":
         return cmd_uninstall_boot_fix(args)
+    if args.command == "install" and args.install_target == "restore-on-boot":
+        return cmd_install_restore_on_boot(args)
+    if args.command == "uninstall" and args.uninstall_target == "restore-on-boot":
+        return cmd_uninstall_restore_on_boot(args)
 
     lib = Library()
     config = Config.load()
@@ -714,6 +781,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_ensure_playing(args, backend)
     if args.command == "power-check":
         return cmd_power_check(args, config, backend)
+    if args.command == "restore":
+        return cmd_restore(args, backend)
     if args.command == "install" and args.install_target == "boot-fix":
         return cmd_install_boot_fix(args, backend)
     if args.command == "install" and args.install_target == "systemd":

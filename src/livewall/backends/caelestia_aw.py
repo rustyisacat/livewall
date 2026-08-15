@@ -49,6 +49,9 @@ class CaelestiaAwBackend(WallpaperBackend):
     supports_restart = True
     supports_thumbnail_refresh = True
     supports_boot_fix = True
+    # Its own shell watches CURRENT_WALLPAPER_STATE and re-renders on login —
+    # nothing else needs to reapply anything.
+    restores_on_login = True
 
     def is_available(self) -> bool:
         return shutil.which(CAELESTIA_BIN) is not None
