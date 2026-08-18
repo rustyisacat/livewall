@@ -32,8 +32,17 @@ IPC_SOCKET = CACHE_DIR / "mpvpaper.sock"
 # mpv handles gifs fine via loop-file, so they get the same looping options as
 # real video containers rather than a hardcoded per-extension special case.
 _LOOPING_EXTENSIONS = {".mp4", ".webm", ".mkv", ".gif"}
-_MPV_OPTS_LOOPING = "loop-file=inf no-audio"
-_MPV_OPTS_STATIC = "image-display-duration=inf no-audio"
+# load-scripts=no: mpv auto-loads every script in /etc/mpv/scripts and
+# ~/.config/mpv/scripts for every instance it spawns — on a system with
+# mpv-mpris installed, that turns each wallpaper into its own MPRIS media
+# session (shows up as "now playing" on media widgets/dashboards). This is a
+# wallpaper renderer, not a media player, so scripting is disabled outright;
+# --scripts-clr only clears an explicitly-passed --scripts list, it does NOT
+# stop the directory auto-load scan that actually loads mpris.so, so it's
+# not enough on its own. The user's real mpv usage elsewhere is a separate
+# process and unaffected.
+_MPV_OPTS_LOOPING = "loop-file=inf no-audio load-scripts=no"
+_MPV_OPTS_STATIC = "image-display-duration=inf no-audio load-scripts=no"
 
 _STARTUP_CHECK_SECONDS = 0.4
 _STOP_GRACE_SECONDS = 1.0
