@@ -1,5 +1,7 @@
 # LiveWall
 
+![LiveWall demo — browsing the library, then applying a wallpaper via the quick picker](docs/demo.gif)
+
 A wallpaper *library manager* for Hyprland, with the actual rendering done by
 a pluggable backend — [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw)
 by default, or [mpvpaper](https://github.com/GhostNaN/mpvpaper) if you're not
