@@ -1,5 +1,11 @@
 # LiveWall
 
+![Platform](https://img.shields.io/badge/platform-Hyprland-58E1FF?logo=linux&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![Textual](https://img.shields.io/badge/UI-Textual-6C4FD6)
+![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)
+
 ![LiveWall demo — browsing the library, then applying a wallpaper via the quick picker](docs/demo.gif)
 
 A wallpaper *library manager* for Hyprland, with the actual rendering done by
