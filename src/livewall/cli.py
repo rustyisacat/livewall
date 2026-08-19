@@ -175,17 +175,36 @@ def cmd_info(args: argparse.Namespace, lib: Library) -> int:
     return 0
 
 
-def _apply_wallpaper(wallpaper: Wallpaper, no_smart: bool, backend: WallpaperBackend) -> int:
+def _apply_wallpaper(
+    wallpaper: Wallpaper, no_smart: bool, backend: WallpaperBackend, monitor: str | None = None
+) -> int:
     try:
-        backend.set_wallpaper(wallpaper.file_path, no_smart=no_smart)
+        if monitor is None:
+            backend.set_wallpaper(wallpaper.file_path, no_smart=no_smart)
+        else:
+            backend.set_wallpaper_for_monitor(monitor, wallpaper.file_path, no_smart=no_smart)
     except BackendUnavailableError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except (FileNotFoundError, BackendApplyError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    print(f"Applied '{wallpaper.name}'")
+    print(f"Applied '{wallpaper.name}'" + (f" on {monitor}" if monitor else ""))
     return 0
+
+
+def _validate_monitor(monitor: str | None, backend: WallpaperBackend) -> str | None:
+    """None if `monitor` is usable (or wasn't given at all) — an error
+    message otherwise, for callers to print and bail out on."""
+    if monitor is None:
+        return None
+    if not backend.supports_per_monitor:
+        return f"the '{backend.name}' backend doesn't support per-monitor wallpapers"
+    targets = backend.list_monitor_targets()
+    if monitor not in targets:
+        available = ", ".join(targets) or "(none detected)"
+        return f"unknown monitor '{monitor}' — available: {available}"
+    return None
 
 
 def cmd_apply(args: argparse.Namespace, lib: Library, config: Config, backend: WallpaperBackend) -> int:
@@ -194,10 +213,19 @@ def cmd_apply(args: argparse.Namespace, lib: Library, config: Config, backend: W
     except WallpaperNotFoundError:
         print(f"No such wallpaper: '{args.name}'", file=sys.stderr)
         return 1
-    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours, backend)
+    error = _validate_monitor(args.monitor, backend)
+    if error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours, backend, monitor=args.monitor)
 
 
 def cmd_random(args: argparse.Namespace, lib: Library, config: Config, backend: WallpaperBackend) -> int:
+    error = _validate_monitor(args.monitor, backend)
+    if error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+
     # Precedence: an explicit --tag always wins; otherwise a matching
     # time-of-day rule; otherwise the static random_tags fallback.
     tags = (
@@ -207,27 +235,65 @@ def cmd_random(args: argparse.Namespace, lib: Library, config: Config, backend: 
         or None
     )
     favorites_only = args.favorites or config.random_favorites_only
+    current = backend.current_path_for_monitor(args.monitor) if args.monitor else backend.current_path()
     wallpaper = rotation.pick_wallpaper(
-        lib, tags=tags, favorites_only=favorites_only, current=backend.current_path()
+        lib, tags=tags, favorites_only=favorites_only, current=current,
+        target=args.monitor or rotation.ALL_TARGET,
     )
     if wallpaper is None:
         print("No wallpapers match.", file=sys.stderr)
         return 1
-    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours, backend)
+    return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours, backend, monitor=args.monitor)
+
+
+def cmd_monitors(args: argparse.Namespace, backend: WallpaperBackend) -> int:
+    if not backend.supports_per_monitor:
+        print(f"The '{backend.name}' backend doesn't support per-monitor wallpapers.")
+        return 0
+    targets = backend.list_monitor_targets()
+    if not targets:
+        print("No monitors detected.")
+        return 0
+    for target in targets:
+        print(target)
+    return 0
+
+
+def _print_library_match(lib: Library, path: Path) -> None:
+    for wallpaper in lib.all():
+        if wallpaper.file_path == path:
+            print(f"  In library as '{wallpaper.name}' (tags: {', '.join(wallpaper.tags) or 'none'})")
+            return
+    print("  (not in the LiveWall library)")
 
 
 def cmd_status(args: argparse.Namespace, lib: Library, backend: WallpaperBackend) -> int:
-    current = backend.current_path()
+    # Per-monitor entries beyond just ALL, if any — the common case (only
+    # ALL active, or a backend that doesn't support per-monitor at all)
+    # falls straight through to the same single "Current: ..." line this
+    # command has always printed.
+    entries: list[tuple[str, Path]] = []
+    if backend.supports_per_monitor:
+        current_all = backend.current_path()
+        if current_all is not None:
+            entries.append(("ALL", current_all))
+        for target in backend.list_monitor_targets():
+            path = backend.current_path_for_monitor(target)
+            if path is not None:
+                entries.append((target, path))
+
+    if len(entries) > 1:
+        for label, path in entries:
+            print(f"{label}: {path}")
+            _print_library_match(lib, path)
+        return 0
+
+    current = entries[0][1] if entries else backend.current_path()
     if current is None:
         print(f"No wallpaper is currently applied (or the '{backend.name}' backend's state is unreadable).")
         return 0
     print(f"Current: {current}")
-    for wallpaper in lib.all():
-        if wallpaper.file_path == current:
-            print(f"  In library as '{wallpaper.name}' (tags: {', '.join(wallpaper.tags) or 'none'})")
-            break
-    else:
-        print("  (not in the LiveWall library)")
+    _print_library_match(lib, current)
     return 0
 
 
@@ -264,6 +330,23 @@ def cmd_restore(args: argparse.Namespace, backend: WallpaperBackend) -> int:
     if backend.restores_on_login:
         print(f"Nothing to do — the '{backend.name}' backend restores its own wallpaper on login.")
         return 0
+
+    per_monitor = backend.last_applied_paths_by_monitor() if backend.supports_per_monitor else {}
+    if per_monitor:
+        ok = True
+        for monitor, path in per_monitor.items():
+            if not path.exists():
+                print(f"Error: last wallpaper file is missing for {monitor}: {path}", file=sys.stderr)
+                ok = False
+                continue
+            try:
+                backend.set_wallpaper_for_monitor(monitor, path)
+            except (BackendUnavailableError, BackendApplyError) as exc:
+                print(f"Error restoring {monitor}: {exc}", file=sys.stderr)
+                ok = False
+                continue
+            print(f"Restored wallpaper on {monitor}: {path}")
+        return 0 if ok else 1
 
     path = backend.last_applied_path()
     if path is None:
@@ -680,12 +763,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply = sub.add_parser("apply", help="Apply a wallpaper via caelestia-aw")
     p_apply.add_argument("name")
     p_apply.add_argument("--no-smart", action="store_true", help="Skip Material You recolouring")
+    p_apply.add_argument(
+        "--monitor", help="Apply to just this monitor instead of everywhere (backend must support it; see `livewall monitors`)"
+    )
 
     p_random = sub.add_parser("random", help="Apply a random wallpaper")
     p_random.add_argument("--tag")
     p_random.add_argument("--favorites", action="store_true")
     p_random.add_argument("--no-smart", action="store_true")
+    p_random.add_argument(
+        "--monitor", help="Apply to just this monitor instead of everywhere (backend must support it; see `livewall monitors`)"
+    )
 
+    sub.add_parser("monitors", help="List monitors that can be individually targeted (if the backend supports it)")
     sub.add_parser("status", help="Show what caelestia-aw currently has applied")
     sub.add_parser(
         "restart-shell",
@@ -800,6 +890,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_power_check(args, config, backend)
     if args.command == "restore":
         return cmd_restore(args, backend)
+    if args.command == "monitors":
+        return cmd_monitors(args, backend)
     if args.command == "install" and args.install_target == "boot-fix":
         return cmd_install_boot_fix(args, backend)
     if args.command == "install" and args.install_target == "systemd":

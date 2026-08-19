@@ -61,8 +61,8 @@ def library(tmp_path):
     return lib
 
 
-def make_args(tag=None, favorites=False, no_smart=False):
-    return argparse.Namespace(tag=tag, favorites=favorites, no_smart=no_smart)
+def make_args(tag=None, favorites=False, no_smart=False, monitor=None):
+    return argparse.Namespace(tag=tag, favorites=favorites, no_smart=no_smart, monitor=monitor)
 
 
 def test_explicit_tag_wins_over_everything(library):
