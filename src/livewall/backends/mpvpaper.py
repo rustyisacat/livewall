@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 MPVPAPER_BIN = "mpvpaper"
 STATE_FILE = CACHE_DIR / "mpvpaper_state.json"
 IPC_SOCKET = CACHE_DIR / "mpvpaper.sock"
+STDERR_LOG = CACHE_DIR / "mpvpaper_stderr.log"
 
 # mpv handles gifs fine via loop-file, so they get the same looping options as
 # real video containers rather than a hardcoded per-extension special case.
@@ -154,17 +155,36 @@ class MpvpaperBackend(WallpaperBackend):
         opts = f"{opts} input-ipc-server={IPC_SOCKET}"
         cmd = [MPVPAPER_BIN, "--layer", "background", "-o", opts, "ALL", str(path)]
         logger.info("Applying via mpvpaper: %s", " ".join(cmd))
+        # stderr goes to a real file, not subprocess.PIPE: mpvpaper is meant
+        # to keep running long after this (short-lived) CLI/systemd-service
+        # process exits, but a PIPE's read end closes when the parent that
+        # opened it exits. mpvpaper does write to stderr periodically during
+        # normal playback, and once that read end is gone, its next write
+        # raises SIGPIPE and kills the whole renderer a few seconds later —
+        # looking exactly like a successful apply followed by the wallpaper
+        # silently vanishing (this is what was actually happening on every
+        # boot and every apply before this fix). A plain file has no
+        # "reader" to disappear, so this can't happen with one.
+        STDERR_LOG.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            stderr_file = open(STDERR_LOG, "w")
+        except OSError as exc:
+            raise BackendApplyError(f"Failed to open {STDERR_LOG}: {exc}") from exc
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                text=True, start_new_session=True,
+                cmd, stdout=subprocess.DEVNULL, stderr=stderr_file,
+                start_new_session=True,
             )
         except OSError as exc:
             raise BackendApplyError(f"Failed to launch mpvpaper: {exc}") from exc
+        finally:
+            # The child has its own duplicated fd to the same file, so this
+            # doesn't affect its ability to keep writing.
+            stderr_file.close()
 
         time.sleep(_STARTUP_CHECK_SECONDS)
         if proc.poll() is not None:
-            stderr = proc.stderr.read() if proc.stderr else ""
+            stderr = STDERR_LOG.read_text(errors="replace") if STDERR_LOG.exists() else ""
             raise BackendApplyError(
                 stderr.strip() or f"mpvpaper exited immediately (code {proc.returncode})"
             )

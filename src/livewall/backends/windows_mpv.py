@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 MPV_BIN = "mpv"
 STATE_FILE = CACHE_DIR / "windows_mpv_state.json"
 IPC_PIPE = r"\\.\pipe\livewall-mpv"
+MPV_STDERR_LOG = CACHE_DIR / "windows_mpv_stderr.log"
+HOST_STDERR_LOG = CACHE_DIR / "windows_wallpaper_host_stderr.log"
 _HOST_SCRIPT = Path(__file__).parent / "_windows_wallpaper_host.py"
 
 # gifs loop fine under mpv's own loop-file handling, same as the Linux backend.
@@ -192,15 +194,35 @@ class WindowsMpvBackend(WallpaperBackend):
         opts = f"{_MPV_OPTS_LOOPING} input-ipc-server={IPC_PIPE}"
         cmd = [mpv, f"--wid={hwnd}", "-o", opts, str(path)]
         logger.info("Applying via mpv: %s", " ".join(cmd))
+        # stderr goes to a real file, not subprocess.PIPE. mpv is meant to
+        # keep running long after this (short-lived) CLI/tray-process call
+        # returns, but nothing ever drains a PIPE's read end once the
+        # startup check below is done — and on the Linux mpvpaper backend,
+        # exactly this pattern turned out to kill the renderer outright (a
+        # write to a PIPE whose reader is gone raises, and on POSIX that's a
+        # fatal SIGPIPE the process never got a chance to handle). Windows
+        # doesn't have SIGPIPE, but a write to a closed pipe there also
+        # raises rather than silently succeeding, so the same failure mode
+        # is possible here too — a plain file has no "reader" to disappear.
+        MPV_STDERR_LOG.parent.mkdir(parents=True, exist_ok=True)
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            stderr_file = open(MPV_STDERR_LOG, "w")
+        except OSError as exc:
+            _terminate(host_pid)
+            raise BackendApplyError(f"Failed to open {MPV_STDERR_LOG}: {exc}") from exc
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=stderr_file)
         except OSError as exc:
             _terminate(host_pid)
             raise BackendApplyError(f"Failed to launch mpv: {exc}") from exc
+        finally:
+            # The child has its own duplicated handle to the same file, so
+            # this doesn't affect its ability to keep writing.
+            stderr_file.close()
 
         time.sleep(_MPV_STARTUP_CHECK_SECONDS)
         if proc.poll() is not None:
-            stderr = proc.stderr.read() if proc.stderr else ""
+            stderr = MPV_STDERR_LOG.read_text(errors="replace") if MPV_STDERR_LOG.exists() else ""
             _terminate(host_pid)
             raise BackendApplyError(stderr.strip() or f"mpv exited immediately (code {proc.returncode})")
 
@@ -217,16 +239,30 @@ class WindowsMpvBackend(WallpaperBackend):
             cmd = [sys.executable, "--wallpaper-host"]
         else:
             cmd = [sys.executable, str(_HOST_SCRIPT)]
+        # stdout stays a PIPE — the host writes exactly one line to it (the
+        # HWND) and never again (it just pumps window messages after that),
+        # so there's no long-running-write-to-an-unread-pipe risk there. But
+        # stderr is at risk of it the same way mpv's is above: the host runs
+        # for as long as the wallpaper is applied, far outliving this call,
+        # so any stderr write after this function returns would hit a
+        # PIPE whose reader is long gone. Same fix: a real file.
+        HOST_STDERR_LOG.parent.mkdir(parents=True, exist_ok=True)
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stderr_file = open(HOST_STDERR_LOG, "w")
+        except OSError as exc:
+            raise BackendApplyError(f"Failed to open {HOST_STDERR_LOG}: {exc}") from exc
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=stderr_file, text=True)
         except OSError as exc:
             raise BackendApplyError(f"Failed to launch the wallpaper host: {exc}") from exc
+        finally:
+            stderr_file.close()
 
         deadline = time.monotonic() + _HOST_STARTUP_TIMEOUT_SECONDS
         line = ""
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                stderr = proc.stderr.read() if proc.stderr else ""
+                stderr = HOST_STDERR_LOG.read_text(errors="replace") if HOST_STDERR_LOG.exists() else ""
                 raise BackendApplyError(stderr.strip() or "wallpaper host exited before reporting a window")
             line = proc.stdout.readline().strip() if proc.stdout else ""
             if line:
