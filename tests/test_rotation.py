@@ -73,7 +73,7 @@ def test_pick_wallpaper_avoids_recent_history_beyond_just_current(isolated_histo
     rotation.HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     import json
 
-    rotation.HISTORY_FILE.write_text(json.dumps(["b"]))
+    rotation.HISTORY_FILE.write_text(json.dumps({"ALL": ["b"]}))
 
     a_path = library.get("a").file_path
     picked = rotation.pick_wallpaper(library, tags=None, favorites_only=False, current=a_path)
@@ -85,7 +85,7 @@ def test_pick_wallpaper_records_history(isolated_history, library, tmp_path):
     add(library, tmp_path, "b", content=b"b")
 
     rotation.pick_wallpaper(library, tags=None, favorites_only=False, current=None)
-    assert len(rotation._read_history()) == 1
+    assert len(rotation._read_history("ALL")) == 1
 
 
 def test_pick_wallpaper_history_is_capped(isolated_history, library, tmp_path):
@@ -95,7 +95,7 @@ def test_pick_wallpaper_history_is_capped(isolated_history, library, tmp_path):
     for _ in range(rotation.HISTORY_SIZE + 3):
         rotation.pick_wallpaper(library, tags=None, favorites_only=False, current=None)
 
-    assert len(rotation._read_history()) == rotation.HISTORY_SIZE
+    assert len(rotation._read_history("ALL")) == rotation.HISTORY_SIZE
 
 
 def test_pick_wallpaper_falls_back_to_full_pool_when_history_excludes_everything(
@@ -108,10 +108,44 @@ def test_pick_wallpaper_falls_back_to_full_pool_when_history_excludes_everything
     import json
 
     rotation.HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    rotation.HISTORY_FILE.write_text(json.dumps(["only"]))
+    rotation.HISTORY_FILE.write_text(json.dumps({"ALL": ["only"]}))
 
     picked = rotation.pick_wallpaper(library, tags=None, favorites_only=False, current=None)
     assert picked.name == "only"
+
+
+def test_reads_old_flat_history_format_as_implicit_all_target(isolated_history, library, tmp_path):
+    # Pre-per-monitor format, from before this feature existed.
+    add(library, tmp_path, "a", content=b"a")
+    add(library, tmp_path, "b", content=b"b")
+    import json
+
+    rotation.HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    rotation.HISTORY_FILE.write_text(json.dumps(["a"]))
+
+    assert rotation._read_history("ALL") == ["a"]
+    picked = rotation.pick_wallpaper(library, tags=None, favorites_only=False, current=None)
+    assert picked.name == "b"
+
+
+def test_pick_wallpaper_history_is_independent_per_target(isolated_history, library, tmp_path):
+    add(library, tmp_path, "a", content=b"a")
+    add(library, tmp_path, "b", content=b"b")
+
+    # "a" is in eDP-1's history, but that shouldn't affect a pick for DP-2.
+    import json
+
+    rotation.HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    rotation.HISTORY_FILE.write_text(json.dumps({"eDP-1": ["a"]}))
+
+    picked = rotation.pick_wallpaper(
+        library, tags=None, favorites_only=False, current=None, target="DP-2"
+    )
+    # Both are eligible for DP-2 — just confirms the eDP-1-only history
+    # entry didn't leak into this target's exclusion set.
+    assert picked.name in {"a", "b"}
+    assert rotation._read_history("eDP-1") == ["a"]
+    assert rotation._read_history("DP-2") == [picked.name]
 
 
 def test_pick_wallpaper_respects_tags_and_favorites(isolated_history, library, tmp_path):
