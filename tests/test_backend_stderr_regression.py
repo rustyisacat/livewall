@@ -128,13 +128,19 @@ def test_mpvpaper_spawn_never_uses_unread_stderr_pipe():
         assert "_spawn(" in inspect.getsource(method), f"{method.__name__} should route through _spawn()"
 
 
-def test_windows_mpv_set_wallpaper_never_uses_unread_stderr_pipe():
-    source = inspect.getsource(windows_mpv.WindowsMpvBackend.set_wallpaper)
-    assert "subprocess.Popen" in source, "sanity check: set_wallpaper should still spawn mpv directly"
+def test_windows_mpv_spawn_never_uses_unread_stderr_pipe():
+    # set_wallpaper()/set_wallpaper_for_monitor() both delegate the actual
+    # mpv spawn to _spawn_mpv() via _apply_animated_target().
+    source = inspect.getsource(windows_mpv.WindowsMpvBackend._spawn_mpv)
+    assert "subprocess.Popen" in source, "sanity check: _spawn_mpv should still spawn mpv directly"
     assert "stderr=subprocess.PIPE" not in source
 
+    for method in (windows_mpv.WindowsMpvBackend.set_wallpaper, windows_mpv.WindowsMpvBackend.set_wallpaper_for_monitor):
+        source = inspect.getsource(method)
+        assert "_apply_animated_target(" in source, f"{method.__name__} should route through _apply_animated_target()"
 
-def test_windows_mpv_start_host_never_uses_unread_stderr_pipe():
-    source = inspect.getsource(windows_mpv.WindowsMpvBackend._start_host)
-    assert "subprocess.Popen" in source, "sanity check: _start_host should still spawn the wallpaper host"
+
+def test_windows_mpv_spawn_host_never_uses_unread_stderr_pipe():
+    source = inspect.getsource(windows_mpv.WindowsMpvBackend._spawn_host)
+    assert "subprocess.Popen" in source, "sanity check: _spawn_host should still spawn the wallpaper host"
     assert "stderr=subprocess.PIPE" not in source

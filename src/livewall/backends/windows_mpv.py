@@ -7,11 +7,25 @@ icons (see _windows_wallpaper_host.py for how that window is acquired).
 Static images skip mpv entirely and go through the plain Win32
 SPI_SETDESKWALLPAPER call, which every Windows version supports natively.
 
+Also attempts per-monitor wallpapers, same as the Linux mpvpaper backend:
+_windows_wallpaper_host.py creates one child window per monitor (plus a
+top-level one covering every monitor for the mirrored ALL case), and this
+backend spawns one mpv.exe per target, each pointed at its own child hwnd.
+The host process is shared across every target — spawning a second one
+would re-run the undocumented WorkerW handshake and duplicate the whole
+window stack — so it's only started once and reused, tracked separately
+from each target's own mpv.exe. State is a dict keyed by target ("ALL", or
+a monitor's device name), same pattern as the Linux backend.
+
 NOTE: this backend has not been tested on real Windows (no Windows machine
 was available during development) — it's built from documented Win32 APIs
 and the same technique Wallpaper Engine/Lively Wallpaper use, but needs
-real-Windows validation before being relied on. See the project plan for
-exactly which parts need that validation.
+real-Windows validation before being relied on. The per-monitor host-reuse
+logic in particular is new and untested — a real ctypes mistake already
+slipped through once in this same GUI (gui_qt/tray.py, fixed only after
+the first real-hardware run), so treat this file with real skepticism
+until it's actually been run on Windows. See the project plan for exactly
+which parts need that validation.
 """
 
 from __future__ import annotations
@@ -20,6 +34,7 @@ import ctypes
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -36,9 +51,7 @@ logger = logging.getLogger(__name__)
 
 MPV_BIN = "mpv"
 STATE_FILE = CACHE_DIR / "windows_mpv_state.json"
-IPC_PIPE = r"\\.\pipe\livewall-mpv"
-MPV_STDERR_LOG = CACHE_DIR / "windows_mpv_stderr.log"
-HOST_STDERR_LOG = CACHE_DIR / "windows_wallpaper_host_stderr.log"
+ALL_TARGET = "ALL"
 _HOST_SCRIPT = Path(__file__).parent / "_windows_wallpaper_host.py"
 
 # gifs loop fine under mpv's own loop-file handling, same as the Linux backend.
@@ -56,6 +69,25 @@ _IPC_TIMEOUT_SECONDS = 2.0
 # Windows Vista, still the correct API on Windows 10/11.
 _SPI_SETDESKWALLPAPER = 20
 _SPIF_UPDATE_AND_SEND = 3
+
+
+def _safe_target(target: str) -> str:
+    """Filesystem-safe version of a target name, for deriving its IPC
+    pipe/stderr-log paths — "ALL" is already plain, and monitor device
+    names (e.g. "\\\\.\\DISPLAY1") contain backslashes that need
+    stripping for use in a file/pipe name."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", target)
+
+
+def _ipc_pipe(target: str) -> str:
+    return rf"\\.\pipe\livewall-mpv-{_safe_target(target)}"
+
+
+def _mpv_stderr_log(target: str) -> Path:
+    return CACHE_DIR / f"windows_mpv_{_safe_target(target)}_stderr.log"
+
+
+HOST_STDERR_LOG = CACHE_DIR / "windows_wallpaper_host_stderr.log"
 
 
 def _pid_alive(pid: int) -> bool:
@@ -94,13 +126,18 @@ class WindowsMpvBackend(WallpaperBackend):
     supports_video = True
     supports_static_images = True
     supports_audio = True
-    supports_multi_monitor = False  # v1 targets the primary monitor only
+    # The host window now covers every monitor's bounding rect, not just
+    # the primary — a real fix, not just a relabeling, since the old
+    # primary-only sizing meant a secondary Windows monitor likely showed
+    # nothing under ALL mode at all.
+    supports_multi_monitor = True
     supports_pause = True
     supports_resume = True
     supports_restart = False
     supports_thumbnail_refresh = False
     supports_boot_fix = False
     restores_on_login = False  # uses the existing restore-on-boot mechanism
+    supports_per_monitor = True  # animated wallpapers only — see set_wallpaper_for_monitor()
 
     def is_available(self) -> bool:
         if sys.platform != "win32":
@@ -120,132 +157,149 @@ class WindowsMpvBackend(WallpaperBackend):
                 return str(bundled)
         return None
 
-    def _read_state(self) -> dict | None:
+    # ---- state -------------------------------------------------------
+
+    def _read_state(self) -> dict:
         try:
-            return json.loads(STATE_FILE.read_text())
+            raw = json.loads(STATE_FILE.read_text())
         except (OSError, json.JSONDecodeError):
-            return None
+            return {}
+        if "targets" not in raw:
+            # Pre-per-monitor flat format ({"host_pid":, "mpv_pid":,
+            # "path":, "static":}) — read as an implicit ALL entry. The
+            # old host_pid (if any) can't be reused without a hwnd map, so
+            # it's just abandoned here rather than tracked — a harmless,
+            # one-time leftover process until the next full stop()/reboot,
+            # not worth the complexity of hunting it down and killing it
+            # from a read path.
+            if "path" not in raw:
+                return {}
+            return {
+                "host_pid": None,
+                "host_hwnds": {},
+                "targets": {
+                    ALL_TARGET: {
+                        "pid": raw.get("mpv_pid"),
+                        "path": raw["path"],
+                        "static": bool(raw.get("static")),
+                    }
+                },
+            }
+        return raw
 
-    def _write_state(self, *, host_pid: int | None, mpv_pid: int | None, path: Path, static: bool) -> None:
+    def _write_state(self, state: dict) -> None:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps({
-            "host_pid": host_pid, "mpv_pid": mpv_pid, "path": str(path), "static": static,
-        }))
+        if state.get("targets"):
+            STATE_FILE.write_text(json.dumps(state))
+        else:
+            STATE_FILE.unlink(missing_ok=True)
 
-    def _clear_state(self) -> None:
-        STATE_FILE.unlink(missing_ok=True)
+    def _live_targets(self) -> dict[str, dict]:
+        live: dict[str, dict] = {}
+        for target, entry in self._read_state().get("targets", {}).items():
+            if entry.get("static"):
+                live[target] = entry  # a static "render" has no process to check
+            elif entry.get("pid") is not None and _pid_alive(entry["pid"]):
+                live[target] = entry
+        return live
+
+    # ---- status --------------------------------------------------------
 
     def is_running(self) -> bool:
-        state = self._read_state()
-        if state is None or state.get("static"):
-            return False
-        return _pid_alive(state["mpv_pid"])
+        return bool(self._live_targets())
 
     def current_path(self) -> Path | None:
-        state = self._read_state()
-        if state is None:
-            return None
-        if not state.get("static") and not _pid_alive(state["mpv_pid"]):
-            # Died, was killed externally, or a fresh boot — report nothing
-            # currently rendering but leave the state file alone (needed by
-            # last_applied_path() for restore-on-boot), same reasoning as
-            # the Linux mpvpaper backend.
-            return None
-        return Path(state["path"])
+        entry = self._live_targets().get(ALL_TARGET)
+        return Path(entry["path"]) if entry else None
+
+    def current_path_for_monitor(self, monitor: str) -> Path | None:
+        entry = self._live_targets().get(monitor)
+        return Path(entry["path"]) if entry else None
 
     def last_applied_path(self) -> Path | None:
-        state = self._read_state()
-        return Path(state["path"]) if state is not None else None
+        entry = self._read_state().get("targets", {}).get(ALL_TARGET)
+        return Path(entry["path"]) if entry else None
+
+    def last_applied_paths_by_monitor(self) -> dict[str, Path]:
+        return {
+            t: Path(e["path"])
+            for t, e in self._read_state().get("targets", {}).items()
+            if t != ALL_TARGET
+        }
+
+    def list_monitor_targets(self) -> list[str]:
+        if sys.platform != "win32":
+            return []
+        from livewall.windows import monitors
+
+        return monitors.list_monitors()
+
+    # ---- stop ------------------------------------------------------------
+
+    def _stop_target(self, target: str, state: dict) -> dict:
+        targets = state.get("targets", {})
+        entry = targets.pop(target, None)
+        state["targets"] = targets
+        if entry is not None and not entry.get("static") and entry.get("pid") is not None:
+            pid = entry["pid"]
+            if _pid_alive(pid):
+                _terminate(pid)
+                deadline = time.monotonic() + _STOP_GRACE_SECONDS
+                while time.monotonic() < deadline and _pid_alive(pid):
+                    time.sleep(_STOP_POLL_INTERVAL)
+
+        if not targets:
+            # Nothing left needs the host's windows — kill it too, rather
+            # than leaving it holding a WorkerW-parented window stack for
+            # no reason.
+            host_pid = state.get("host_pid")
+            if host_pid is not None and _pid_alive(host_pid):
+                _terminate(host_pid)
+            state["host_pid"] = None
+            state["host_hwnds"] = {}
+        return state
 
     def stop(self) -> None:
+        """Stops every tracked target — ALL and any per-monitor renders,
+        plus the shared host once nothing needs it — matching the
+        pre-per-monitor meaning of "stop everything"."""
         state = self._read_state()
-        if state is None:
-            return
-        for key in ("host_pid", "mpv_pid"):
-            pid = state.get(key)
-            if pid is not None and _pid_alive(pid):
-                _terminate(pid)
-        if state.get("host_pid") or state.get("mpv_pid"):
-            deadline = time.monotonic() + _STOP_GRACE_SECONDS
-            while time.monotonic() < deadline and any(
-                state.get(k) and _pid_alive(state[k]) for k in ("host_pid", "mpv_pid")
-            ):
-                time.sleep(_STOP_POLL_INTERVAL)
-        self._clear_state()
+        for target in list(state.get("targets", {})):
+            state = self._stop_target(target, state)
+        self._write_state(state)
 
-    def set_wallpaper(self, path: Path, *, no_smart: bool = False) -> None:
-        # no_smart (Material You recolour opt-out) is a caelestia-aw-only
-        # concept — ignored here, same as on the Linux mpvpaper backend.
-        mpv = self._mpv_path()
-        if mpv is None:
-            raise BackendUnavailableError("'mpv' is not on PATH")
-        if not path.exists():
-            raise FileNotFoundError(f"Wallpaper file missing: {path}")
+    # ---- host lifecycle -------------------------------------------------
 
-        # Always stop whatever was previously tracked first — guarantees no
-        # orphaned host/mpv processes across repeated switches.
-        self.stop()
+    def _get_or_start_host(self, state: dict) -> tuple[int, dict[str, int]]:
+        """Reuses an already-running host's window map if one exists —
+        spawning a second host would re-run the WorkerW handshake and
+        duplicate the whole window stack — otherwise spawns a fresh one."""
+        host_pid = state.get("host_pid")
+        host_hwnds = state.get("host_hwnds") or {}
+        if host_pid is not None and host_hwnds and _pid_alive(host_pid):
+            return host_pid, {str(k): int(v) for k, v in host_hwnds.items()}
+        return self._spawn_host()
 
-        if path.suffix.lower() not in _LOOPING_EXTENSIONS:
-            self._set_static(path)
-            return
-
-        host_pid, hwnd = self._start_host()
-        opts = f"{_MPV_OPTS_LOOPING} input-ipc-server={IPC_PIPE}"
-        cmd = [mpv, f"--wid={hwnd}", "-o", opts, str(path)]
-        logger.info("Applying via mpv: %s", " ".join(cmd))
-        # stderr goes to a real file, not subprocess.PIPE. mpv is meant to
-        # keep running long after this (short-lived) CLI/tray-process call
-        # returns, but nothing ever drains a PIPE's read end once the
-        # startup check below is done — and on the Linux mpvpaper backend,
-        # exactly this pattern turned out to kill the renderer outright (a
-        # write to a PIPE whose reader is gone raises, and on POSIX that's a
-        # fatal SIGPIPE the process never got a chance to handle). Windows
-        # doesn't have SIGPIPE, but a write to a closed pipe there also
-        # raises rather than silently succeeding, so the same failure mode
-        # is possible here too — a plain file has no "reader" to disappear.
-        MPV_STDERR_LOG.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            stderr_file = open(MPV_STDERR_LOG, "w")
-        except OSError as exc:
-            _terminate(host_pid)
-            raise BackendApplyError(f"Failed to open {MPV_STDERR_LOG}: {exc}") from exc
-        try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=stderr_file)
-        except OSError as exc:
-            _terminate(host_pid)
-            raise BackendApplyError(f"Failed to launch mpv: {exc}") from exc
-        finally:
-            # The child has its own duplicated handle to the same file, so
-            # this doesn't affect its ability to keep writing.
-            stderr_file.close()
-
-        time.sleep(_MPV_STARTUP_CHECK_SECONDS)
-        if proc.poll() is not None:
-            stderr = MPV_STDERR_LOG.read_text(errors="replace") if MPV_STDERR_LOG.exists() else ""
-            _terminate(host_pid)
-            raise BackendApplyError(stderr.strip() or f"mpv exited immediately (code {proc.returncode})")
-
-        self._write_state(host_pid=host_pid, mpv_pid=proc.pid, path=path, static=False)
-
-    def _start_host(self) -> tuple[int, int]:
-        """Spawns the wallpaper host and reads back the HWND it acquired
-        behind the desktop icons. A frozen (PyInstaller) build has no
-        standalone _windows_wallpaper_host.py file to spawn once everything
-        is bundled into one .exe, so it re-invokes itself with the hidden
-        --wallpaper-host flag instead (see gui_qt/app.py); a dev/source run
-        spawns the plain script directly."""
+    def _spawn_host(self) -> tuple[int, dict[str, int]]:
+        """Spawns the wallpaper host and reads back the hwnd it acquired
+        for every target (ALL, plus one per monitor). A frozen (PyInstaller)
+        build has no standalone _windows_wallpaper_host.py file to spawn
+        once everything is bundled into one .exe, so it re-invokes itself
+        with the hidden --wallpaper-host flag instead (see gui_qt/app.py);
+        a dev/source run spawns the plain script directly."""
         if getattr(sys, "frozen", False):
             cmd = [sys.executable, "--wallpaper-host"]
         else:
             cmd = [sys.executable, str(_HOST_SCRIPT)]
-        # stdout stays a PIPE — the host writes exactly one line to it (the
-        # HWND) and never again (it just pumps window messages after that),
-        # so there's no long-running-write-to-an-unread-pipe risk there. But
-        # stderr is at risk of it the same way mpv's is above: the host runs
-        # for as long as the wallpaper is applied, far outliving this call,
-        # so any stderr write after this function returns would hit a
-        # PIPE whose reader is long gone. Same fix: a real file.
+        # stdout stays a PIPE — the host writes a short, fixed burst of
+        # lines to it (one per target, plus a DONE sentinel) and never
+        # again after that (it just pumps window messages), so there's no
+        # long-running-write-to-an-unread-pipe risk there. Stderr is at
+        # risk of exactly that, though: the host runs for as long as any
+        # wallpaper is applied, far outliving this call, so any stderr
+        # write after this function returns would hit a PIPE whose reader
+        # is long gone — same fix as everywhere else in this project: a
+        # real file, which has no "reader" to disappear.
         HOST_STDERR_LOG.parent.mkdir(parents=True, exist_ok=True)
         try:
             stderr_file = open(HOST_STDERR_LOG, "w")
@@ -259,40 +313,163 @@ class WindowsMpvBackend(WallpaperBackend):
             stderr_file.close()
 
         deadline = time.monotonic() + _HOST_STARTUP_TIMEOUT_SECONDS
-        line = ""
+        hwnds: dict[str, int] = {}
+        saw_done = False
         while time.monotonic() < deadline:
             if proc.poll() is not None:
                 stderr = HOST_STDERR_LOG.read_text(errors="replace") if HOST_STDERR_LOG.exists() else ""
-                raise BackendApplyError(stderr.strip() or "wallpaper host exited before reporting a window")
+                raise BackendApplyError(stderr.strip() or "wallpaper host exited before reporting its windows")
             line = proc.stdout.readline().strip() if proc.stdout else ""
-            if line:
+            if not line:
+                continue
+            if line == "DONE":
+                saw_done = True
                 break
-        if not line or not line.isdigit():
+            target, _, hwnd_str = line.partition(" ")
+            if hwnd_str.isdigit():
+                hwnds[target] = int(hwnd_str)
+
+        if not saw_done or ALL_TARGET not in hwnds:
             _terminate(proc.pid)
-            raise BackendApplyError("wallpaper host did not report a window handle in time")
-        return proc.pid, int(line)
+            raise BackendApplyError("wallpaper host did not finish reporting its windows in time")
+        return proc.pid, hwnds
+
+    # ---- apply -----------------------------------------------------------
+
+    def _spawn_mpv(self, target: str, hwnd: int, path: Path) -> int:
+        mpv = self._mpv_path()
+        opts = f"{_MPV_OPTS_LOOPING} input-ipc-server={_ipc_pipe(target)}"
+        cmd = [mpv, f"--wid={hwnd}", "-o", opts, str(path)]
+        logger.info("Applying via mpv (%s): %s", target, " ".join(cmd))
+
+        stderr_log = _mpv_stderr_log(target)
+        stderr_log.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            stderr_file = open(stderr_log, "w")
+        except OSError as exc:
+            raise BackendApplyError(f"Failed to open {stderr_log}: {exc}") from exc
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=stderr_file)
+        except OSError as exc:
+            raise BackendApplyError(f"Failed to launch mpv: {exc}") from exc
+        finally:
+            stderr_file.close()
+
+        time.sleep(_MPV_STARTUP_CHECK_SECONDS)
+        if proc.poll() is not None:
+            stderr = stderr_log.read_text(errors="replace") if stderr_log.exists() else ""
+            raise BackendApplyError(stderr.strip() or f"mpv exited immediately (code {proc.returncode})")
+        return proc.pid
+
+    def _apply_animated_target(self, target: str, path: Path, state: dict) -> dict:
+        """Ensures a host is running, spawns mpv pointed at `target`'s
+        hwnd, and folds the result into `state` — still needs to be
+        written by the caller, mirroring mpvpaper.py's spawn-then
+        -caller-writes-state split."""
+        host_pid, hwnds = self._get_or_start_host(state)
+        hwnd = hwnds.get(target)
+        if hwnd is None:
+            raise BackendApplyError(f"the wallpaper host didn't report a window for '{target}'")
+        mpv_pid = self._spawn_mpv(target, hwnd, path)
+        state["host_pid"] = host_pid
+        state["host_hwnds"] = hwnds
+        state.setdefault("targets", {})[target] = {"pid": mpv_pid, "path": str(path), "static": False}
+        return state
+
+    def set_wallpaper(self, path: Path, *, no_smart: bool = False) -> None:
+        # no_smart (Material You recolour opt-out) is a caelestia-aw-only
+        # concept — ignored here, same as on the Linux mpvpaper backend.
+        mpv = self._mpv_path()
+        if mpv is None:
+            raise BackendUnavailableError("'mpv' is not on PATH")
+        if not path.exists():
+            raise FileNotFoundError(f"Wallpaper file missing: {path}")
+
+        # Always stop every tracked target first — guarantees no orphaned
+        # host/mpv processes across repeated switches, and that going back
+        # to a single mirrored wallpaper actually replaces whatever
+        # per-monitor assignments existed.
+        state = self._read_state()
+        for target in list(state.get("targets", {})):
+            state = self._stop_target(target, state)
+        self._write_state(state)
+
+        if path.suffix.lower() not in _LOOPING_EXTENSIONS:
+            self._set_static(path)
+            return
+
+        state = self._read_state()
+        state = self._apply_animated_target(ALL_TARGET, path, state)
+        self._write_state(state)
+
+    def set_wallpaper_for_monitor(self, monitor: str, path: Path, *, no_smart: bool = False) -> None:
+        mpv = self._mpv_path()
+        if mpv is None:
+            raise BackendUnavailableError("'mpv' is not on PATH")
+        if not path.exists():
+            raise FileNotFoundError(f"Wallpaper file missing: {path}")
+        if path.suffix.lower() not in _LOOPING_EXTENSIONS:
+            # A real per-monitor static wallpaper needs the modern
+            # IDesktopWallpaper COM interface, not SPI_SETDESKWALLPAPER
+            # (which only ever sets one wallpaper across the whole
+            # desktop) — a bigger, riskier addition not worth attempting
+            # blind on top of everything else here that's already
+            # unverified.
+            raise BackendApplyError(
+                "per-monitor static images aren't supported yet — only animated wallpapers can be assigned to a single monitor"
+            )
+
+        state = self._read_state()
+        targets = state.get("targets", {})
+
+        if ALL_TARGET in targets:
+            # Switching from mirrored to per-monitor: naively tearing ALL
+            # down would blank every monitor just to satisfy a change to
+            # one of them. Preserve what the others were showing by
+            # re-launching ALL's own path explicitly on each of them first
+            # (skipped if ALL was a static image — nothing animated to
+            # re-launch, and per-monitor static isn't supported anyway).
+            all_entry = targets[ALL_TARGET]
+            others = [m for m in self.list_monitor_targets() if m != monitor]
+            state = self._stop_target(ALL_TARGET, state)
+            if not all_entry.get("static"):
+                for other in others:
+                    try:
+                        state = self._apply_animated_target(other, Path(all_entry["path"]), state)
+                    except BackendApplyError as exc:
+                        logger.warning("Could not preserve the previous wallpaper on %s: %s", other, exc)
+                        continue
+        else:
+            state = self._stop_target(monitor, state)
+
+        state = self._apply_animated_target(monitor, path, state)
+        self._write_state(state)
 
     def _set_static(self, path: Path) -> None:
-        image_path = path
         if path.suffix.lower() not in _STATIC_EXTENSIONS:
             raise BackendApplyError(f"Unsupported static image format: {path.suffix}")
         ok = ctypes.windll.user32.SystemParametersInfoW(
-            _SPI_SETDESKWALLPAPER, 0, str(image_path), _SPIF_UPDATE_AND_SEND
+            _SPI_SETDESKWALLPAPER, 0, str(path), _SPIF_UPDATE_AND_SEND
         )
         if not ok:
             raise BackendApplyError("SystemParametersInfoW failed to set the wallpaper")
-        self._write_state(host_pid=None, mpv_pid=None, path=path, static=True)
+        state = self._read_state()
+        state.setdefault("targets", {})[ALL_TARGET] = {"pid": None, "path": str(path), "static": True}
+        self._write_state(state)
 
-    def _mpv_ipc(self, command: list) -> dict | None:
-        """Sends one JSON IPC command over mpv's named pipe and returns its
-        reply, or None if nothing's running / the pipe isn't reachable —
-        callers treat that as "nothing to do", not an error, same as the
-        Linux backend's _mpv_ipc(). A Windows named pipe can be opened via
-        the plain builtin open() in r+b mode — no pywin32 needed."""
-        if not self.is_running():
+    # ---- mpv IPC (pause/resume) -------------------------------------------
+
+    def _mpv_ipc(self, target: str, command: list) -> dict | None:
+        """Sends one JSON IPC command over `target`'s mpv named pipe and
+        returns its reply, or None if that target isn't running / its pipe
+        isn't reachable — callers treat that as "nothing to do", not an
+        error, same as the Linux backend's _mpv_ipc(). A Windows named pipe
+        can be opened via the plain builtin open() in r+b mode — no
+        pywin32 needed."""
+        if target not in self._live_targets():
             return None
         try:
-            with open(IPC_PIPE, "r+b", buffering=0) as pipe:
+            with open(_ipc_pipe(target), "r+b", buffering=0) as pipe:
                 pipe.write((json.dumps({"command": command}) + "\n").encode())
                 buf = b""
                 while not buf.endswith(b"\n"):
@@ -301,7 +478,7 @@ class WindowsMpvBackend(WallpaperBackend):
                         break
                     buf += chunk
         except OSError as exc:
-            logger.warning("mpv IPC command %s failed: %s", command, exc)
+            logger.warning("mpv IPC command %s (%s) failed: %s", command, target, exc)
             return None
         try:
             return json.loads(buf)
@@ -309,13 +486,31 @@ class WindowsMpvBackend(WallpaperBackend):
             return None
 
     def pause(self) -> None:
-        self._mpv_ipc(["set_property", "pause", True])
+        # Battery saver means "stop rendering to save power" — every live
+        # animated target gets paused, not just ALL, so a per-monitor
+        # setup doesn't keep half its wallpapers burning battery. Static
+        # targets have no process to pause.
+        for target, entry in self._live_targets().items():
+            if not entry.get("static"):
+                self._mpv_ipc(target, ["set_property", "pause", True])
 
     def resume(self) -> None:
-        self._mpv_ipc(["set_property", "pause", False])
+        for target, entry in self._live_targets().items():
+            if not entry.get("static"):
+                self._mpv_ipc(target, ["set_property", "pause", False])
 
     def is_paused(self) -> bool | None:
-        response = self._mpv_ipc(["get_property", "pause"])
+        """True/False if known, None if there's nothing (animated) running
+        to ask. In per-monitor mode this reports one representative
+        target's state (ALL if present, otherwise whichever live target
+        sorts first) rather than every target individually — a v1
+        simplification, since pause()/resume() above always act on all of
+        them together anyway."""
+        live = {t: e for t, e in self._live_targets().items() if not e.get("static")}
+        if not live:
+            return None
+        target = ALL_TARGET if ALL_TARGET in live else sorted(live)[0]
+        response = self._mpv_ipc(target, ["get_property", "pause"])
         if response is None or "data" not in response:
             return None
         return bool(response["data"])
@@ -326,15 +521,21 @@ class WindowsMpvBackend(WallpaperBackend):
         available = self.is_available()
         checks.append(("mpv CLI", available, "found" if available else "'mpv' not found on PATH or bundled"))
 
-        running = self.is_running()
-        checks.append(("wallpaper process running", running, "tracked process alive" if running else "not currently running (or a static image is set)"))
+        live = self._live_targets()
+        checks.append((
+            "wallpaper process running", bool(live),
+            f"tracked target(s): {', '.join(sorted(live))}" if live else "not currently running",
+        ))
 
-        current = self.current_path()
-        if current is None:
+        if not live:
             checks.append(("current wallpaper", True, "none applied yet"))
-        elif not current.exists():
-            checks.append(("current wallpaper", False, f"tracked file missing: {current}"))
         else:
-            checks.append(("current wallpaper", True, str(current)))
+            for target in sorted(live):
+                path = Path(live[target]["path"])
+                label = "current wallpaper" if target == ALL_TARGET else f"current wallpaper ({target})"
+                if not path.exists():
+                    checks.append((label, False, f"tracked file missing: {path}"))
+                else:
+                    checks.append((label, True, str(path)))
 
         return checks
