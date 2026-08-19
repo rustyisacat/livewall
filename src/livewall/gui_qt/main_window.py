@@ -12,6 +12,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -27,6 +28,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from livewall.gui_qt import theme
 
 from livewall.backends import BackendApplyError, BackendUnavailableError, WallpaperBackend
 from livewall.config import Config
@@ -85,16 +88,21 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
 
         self.search_box = QLineEdit(placeholderText="Search name or tag…")
         self.search_box.textChanged.connect(self._on_search_changed)
         root.addWidget(self.search_box)
 
         category_row = QHBoxLayout()
+        category_row.setSpacing(6)
         self.category_buttons: dict[str, QPushButton] = {}
         for category in CATEGORY_TAGS:
             btn = QPushButton(category)
+            btn.setObjectName("pill")
             btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda checked, c=category: self._on_category_clicked(c))
             category_row.addWidget(btn)
             self.category_buttons[category] = btn
@@ -102,15 +110,22 @@ class MainWindow(QMainWindow):
         root.addLayout(category_row)
 
         splitter = QSplitter()
+        splitter.setHandleWidth(12)
         self.list_widget = QListWidget()
+        self.list_widget.setSpacing(1)
         self.list_widget.currentItemChanged.connect(self._on_selection_changed)
         splitter.addWidget(self.list_widget)
 
-        detail = QWidget()
+        detail = QFrame()
+        detail.setObjectName("detailCard")
         detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(16, 16, 16, 16)
+        detail_layout.setSpacing(12)
         self.thumbnail_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
+        self.thumbnail_label.setObjectName("thumbnail")
         self.thumbnail_label.setMinimumHeight(220)
         self.meta_label = QLabel(wordWrap=True)
+        self.meta_label.setTextFormat(Qt.TextFormat.RichText)
         detail_layout.addWidget(self.thumbnail_label)
         detail_layout.addWidget(self.meta_label)
         detail_layout.addStretch()
@@ -178,17 +193,31 @@ class MainWindow(QMainWindow):
 
         current = self.backend.current_path()
         is_current = current is not None and w.file_path == current
-        lines = [
-            f"<b>{w.name}</b>" + ("  <span style='color:#4caf50'>▶ currently applied</span>" if is_current else ""),
-            f"Type: {w.kind}  Favorite: {'yes' if w.favorite else 'no'}",
-            f"Resolution: {info.metadata.resolution}",
-            f"Aspect ratio: {info.metadata.aspect_ratio or 'unknown'}",
-            f"Duration: {info.duration_human}",
-            f"Animated: {'yes' if info.metadata.animated else 'no'}",
-            f"Size: {info.size_human}",
-            f"Tags: {', '.join(w.tags) or '(none)'}",
+        title = f"<div style='font-size:16px; font-weight:600; color:{theme.TEXT}'>{w.name}</div>"
+        if is_current:
+            title += (
+                f"<div style='color:{theme.SUCCESS}; font-weight:600; margin-bottom:4px'>"
+                "▶ currently applied</div>"
+            )
+        if w.favorite:
+            title += f"<div style='color:{theme.ACCENT}; margin-bottom:4px'>★ favorite</div>"
+        rows = [
+            ("Type", w.kind),
+            ("Resolution", info.metadata.resolution),
+            ("Aspect ratio", info.metadata.aspect_ratio or "unknown"),
+            ("Duration", info.duration_human),
+            ("Animated", "yes" if info.metadata.animated else "no"),
+            ("Size", info.size_human),
+            ("Tags", ", ".join(w.tags) or "(none)"),
         ]
-        self.meta_label.setText("<br>".join(lines))
+        table = "".join(
+            f"<tr>"
+            f"<td style='color:{theme.TEXT_MUTED}; padding:2px 10px 2px 0'>{label}</td>"
+            f"<td style='color:{theme.TEXT}'>{value}</td>"
+            f"</tr>"
+            for label, value in rows
+        )
+        self.meta_label.setText(f"{title}<table style='margin-top:6px'>{table}</table>")
 
     def _refresh_current_item(self, wallpaper) -> None:
         item = self.list_widget.currentItem()

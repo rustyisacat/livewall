@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from livewall.backends import BackendUnavailableError, get_backend
 from livewall.config import Config
+from livewall.gui_qt import theme
 from livewall.gui_qt.main_window import MainWindow
 from livewall.gui_qt.quick_picker import QuickPicker
 from livewall.gui_qt.tray import TrayIcon
@@ -67,6 +69,11 @@ def run() -> None:
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # stay alive in the tray
+    theme.apply(app)
+
+    icon_path = _icon_path()
+    if icon_path:
+        app.setWindowIcon(QIcon(icon_path))
 
     library = Library()
     main_window = MainWindow(library, config, backend)

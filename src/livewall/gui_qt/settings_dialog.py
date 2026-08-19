@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -37,8 +38,13 @@ class SettingsDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self) -> None:
+        self.resize(440, 0)
         root = QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(14)
         form = QFormLayout()
+        form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         root.addLayout(form)
 
         self.backend_combo = QComboBox()

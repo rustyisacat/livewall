@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QVBoxLayo
 
 from livewall.backends import BackendApplyError, BackendUnavailableError, get_backend
 from livewall.config import Config
+from livewall.gui_qt import theme
 from livewall.library import Library, LiveWallError
 
 _NAME_ROLE = Qt.ItemDataRole.UserRole
@@ -23,6 +24,7 @@ class QuickPicker(QWidget):
         super().__init__()
         self.setWindowTitle("LiveWall Picker")
         self.setWindowFlag(Qt.WindowType.Popup)
+        self.setObjectName("quickPicker")
         self.resize(480, 360)
 
         self.library = Library()
@@ -35,6 +37,8 @@ class QuickPicker(QWidget):
             self.backend_error = str(exc)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
         self.search_box = QLineEdit(placeholderText="Search wallpapers…")
         self.search_box.textChanged.connect(self._refresh_list)
         self.search_box.returnPressed.connect(self._apply_selected)
@@ -50,6 +54,7 @@ class QuickPicker(QWidget):
         self._refresh_list("")
 
     def _refresh_list(self, query: str) -> None:
+        self.search_box.setStyleSheet("")
         self.list_widget.clear()
         for wallpaper in self.library.search(query=query, prefer_animated_format=True):
             item = QListWidgetItem(wallpaper.name)
@@ -66,7 +71,7 @@ class QuickPicker(QWidget):
 
         if self.backend is None:
             self.search_box.setText(self.backend_error or "No backend configured")
-            self.search_box.setStyleSheet("color: red;")
+            self.search_box.setStyleSheet(f"color: {theme.DANGER};")
             return
 
         name = item.data(_NAME_ROLE)
@@ -74,7 +79,7 @@ class QuickPicker(QWidget):
             self.backend.set_wallpaper(self.library.get(name).file_path, no_smart=self.config.no_smart_colours)
         except (BackendUnavailableError, FileNotFoundError, BackendApplyError, LiveWallError) as exc:
             self.search_box.setText(str(exc))
-            self.search_box.setStyleSheet("color: red;")
+            self.search_box.setStyleSheet(f"color: {theme.DANGER};")
             return
         self.close()
 
