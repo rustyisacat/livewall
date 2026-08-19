@@ -33,33 +33,47 @@ jobs:
       - name: Fetch mpv.exe
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path packaging/windows/vendor | Out-Null
-          # NOTE: the project-root "files/latest/download" link is ambiguous —
-          # this project publishes separate 64bit-v3/64bit/32bit/libmpv/release
-          # folders, so SourceForge can't pick one and serves the HTML file
-          # listing page instead of redirecting to an actual file (this broke
-          # CI once already: a 133KB "archive" that 7z refused to open). Scope
-          # "latest" to the plain 64bit folder (not 64bit-v3, which needs an
-          # AVX2 CPU — the baseline build is the safer bet for an unknown
-          # tester's machine) to get an unambiguous redirect to a real file.
-          $url = "https://sourceforge.net/projects/mpv-player-windows/files/64bit/latest/download"
-          $headers = @{ "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
-          Invoke-WebRequest -Uri $url -OutFile mpv-build.7z -Headers $headers -MaximumRedirection 10
+          # NOTE: this used to download directly from SourceForge, but that
+          # broke twice: (1) the project-root "latest/download" link is
+          # ambiguous across its 64bit-v3/64bit/32bit/libmpv/release folders,
+          # so it served an HTML listing page instead of redirecting to a
+          # file; (2) even the folder-scoped link hit a Cloudflare JS
+          # challenge ("Just a moment...") that a scripted request can never
+          # solve — SourceForge's download-redirect endpoints actively block
+          # non-browser clients. Chocolatey (preinstalled on GitHub's Windows
+          # runners) mirrors the same upstream mpv Windows build without that
+          # problem, so it's used here instead.
+          choco install mpv -y --no-progress
 
-          $size = (Get-Item mpv-build.7z).Length
-          if ($size -lt 1MB) {
-            Write-Error "Downloaded mpv-build.7z is only $size bytes - SourceForge likely served an HTML page instead of the real archive. Check https://sourceforge.net/projects/mpv-player-windows/files/64bit/ for the current file layout."
+          $candidates = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib\mpv" -Recurse -Filter "mpv.exe" -ErrorAction SilentlyContinue
+          if (-not $candidates) {
+            Write-Error "choco installed the mpv package but no mpv.exe was found under C:\ProgramData\chocolatey\lib\mpv - the package layout may have changed."
             exit 1
           }
+          # The chocolatey shim at ...\chocolatey\bin\mpv.exe is a tiny
+          # redirect stub, not the real binary — picking the largest match
+          # under the package's own lib folder gets the actual mpv.exe.
+          $mpvExe = ($candidates | Sort-Object Length -Descending | Select-Object -First 1).FullName
 
-          7z x mpv-build.7z -ompv-extracted
-          Copy-Item mpv-extracted/mpv.exe packaging/windows/vendor/mpv.exe
+          New-Item -ItemType Directory -Force -Path packaging/windows/vendor | Out-Null
+          Copy-Item $mpvExe packaging/windows/vendor/mpv.exe
+
+          $size = (Get-Item packaging/windows/vendor/mpv.exe).Length
+          if ($size -lt 1MB) {
+            Write-Error "Copied mpv.exe is only $size bytes from $mpvExe - this doesn't look like the real binary."
+            exit 1
+          }
+          Write-Host "Bundled mpv.exe from $mpvExe ($size bytes)"
+
           # Ship mpv's own license alongside it — standard practice when
           # bundling a third-party GPL/LGPL binary (see backends/windows_mpv.py's
           # docstring for why this doesn't create a licensing conflict with
           # LiveWall's own AGPL-3.0-or-later: subprocess+IPC, not linking).
-          if (Test-Path mpv-extracted/README.txt) {
-            Copy-Item mpv-extracted/README.txt packaging/windows/vendor/mpv-LICENSE.txt
+          # Best-effort: not every chocolatey package layout ships one
+          # alongside the binary, and that's not worth failing the build over.
+          $license = Get-ChildItem -Path (Split-Path $mpvExe -Parent) -Filter "*LICENSE*" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($license) {
+            Copy-Item $license.FullName packaging/windows/vendor/mpv-LICENSE.txt
           }
 
       - name: Build with PyInstaller
