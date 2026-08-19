@@ -182,6 +182,17 @@ QPushButton:default:pressed {{
     background: {ACCENT_PRESSED};
 }}
 
+/* The "LiveWall was updated!" banner atop the library browser */
+QFrame#updateBanner {{
+    background: {ACCENT};
+    border-radius: 8px;
+}}
+
+QFrame#updateBanner QLabel {{
+    color: {ACCENT_TEXT};
+    background: transparent;
+}}
+
 /* Card frame around the library browser's thumbnail/detail pane */
 QFrame#detailCard {{
     background: {PANEL};

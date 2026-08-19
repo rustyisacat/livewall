@@ -62,8 +62,10 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("LiveWall")
         self.resize(1000, 650)
+        self._update_changelog: list[str] = []
         self._build_ui()
         self.refresh_list()
+        self._maybe_show_update_banner()
 
     # ---- layout ----------------------------------------------------
 
@@ -135,6 +137,35 @@ class MainWindow(QMainWindow):
         root.addWidget(splitter)
 
         self.setStatusBar(QStatusBar())
+
+    def _maybe_show_update_banner(self) -> None:
+        from livewall.updater import read_and_clear_notice
+
+        notice = read_and_clear_notice()
+        if not notice or not notice.get("changelog"):
+            return
+        self._update_changelog = notice["changelog"]
+
+        banner = QFrame()
+        banner.setObjectName("updateBanner")
+        banner.setFixedHeight(48)
+        layout = QHBoxLayout(banner)
+        layout.setContentsMargins(14, 8, 10, 8)
+        layout.addWidget(QLabel("<b>LiveWall was updated!</b>"), 1)
+        whats_new = QPushButton("What's new?")
+        whats_new.clicked.connect(self._show_update_changelog)
+        layout.addWidget(whats_new)
+        dismiss = QPushButton("×")
+        dismiss.setFixedWidth(32)
+        dismiss.clicked.connect(banner.deleteLater)
+        layout.addWidget(dismiss)
+
+        self.centralWidget().layout().insertWidget(0, banner)
+
+    def _show_update_changelog(self) -> None:
+        from livewall.gui_qt.update_dialog import UpdateChangelogDialog
+
+        UpdateChangelogDialog(self._update_changelog, self).exec()
 
     # ---- list/search/filter -----------------------------------------
 
