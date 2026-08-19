@@ -69,10 +69,12 @@ class TrayIcon(QSystemTrayIcon):
     def _register_hotkey(self) -> None:
         from livewall.windows import hotkey
 
-        # A hidden widget purely to own a real HWND for RegisterHotKey to
-        # attach to — decoupled from whether the library browser is open.
+        # A widget purely to own a real HWND for RegisterHotKey to attach
+        # to — decoupled from whether the library browser is open. It's
+        # never shown (.show() is never called), and winId() forces Qt to
+        # create the underlying native window regardless, so no special
+        # window flags are needed here.
         self._hotkey_widget = QWidget()
-        self._hotkey_widget.setWindowFlag(True)
         hwnd = int(self._hotkey_widget.winId())
         ok = hotkey.register(hwnd)
         if not ok:
