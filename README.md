@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Textual](https://img.shields.io/badge/UI-Textual-6C4FD6)
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 ![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)
 
 ![LiveWall demo — browsing the library, then applying a wallpaper via the quick picker](docs/demo.gif)
@@ -137,37 +137,83 @@ floating `foot` window.
 
 ## Windows
 
-Windows users get a native desktop GUI, not a terminal app — double-click
-`LiveWall.exe` and it opens the library browser directly, no `livewall`
-command needed for day-to-day use. It covers everything the Linux CLI does:
-browse/search/tag/favorite the library, apply wallpapers, a settings screen,
-and toggles for the automation Linux installs via `livewall install ...`
-(random rotation, restore-on-login, battery-saver), backed by Windows Task
-Scheduler instead of systemd.
+Windows users get a plain desktop app — no terminal, no commands to type.
+Everything below is written for someone testing it for the first time.
+
+⚠️ **This is a brand-new, unsigned app that has not yet been run on a real
+Windows machine.** Two things follow from that, and neither means something
+is broken:
+
+1. **Windows will probably show a blue "Windows protected your PC" warning**
+   the first time you run it (this is called SmartScreen, and it shows up
+   for any new app that isn't from a large, well-known publisher yet — it's
+   not a sign of a virus). See step 4 below for how to get past it.
+2. **Your antivirus might flag or quarantine the file.** This is a known,
+   common false positive for apps built with the tool LiveWall uses to
+   package itself (PyInstaller) — plenty of legitimate small apps trigger
+   it. If it happens, please note exactly what your antivirus said (name of
+   the detection, e.g. "Trojan:Win32/Wacatac") when you report back — that's
+   useful information even though it's very likely a false positive.
+
+### How to install and run it
+
+1. Go to the [Releases page](../../releases) and download the newest
+   `LiveWall-windows.zip`.
+2. Right-click the downloaded zip → **Extract All...** → choose a folder
+   (your Desktop is fine) → **Extract**.
+3. Open the folder that was just created and double-click **`LiveWall.exe`**.
+4. If you see the blue "Windows protected your PC" screen: click
+   **More info**, then click the **Run anyway** button that appears. (If you
+   don't see this screen at all, that's fine too — just continue.)
+5. LiveWall's window should open, showing your wallpaper library (empty on
+   first run — see below).
+
+### What to try
+
+- **Add a wallpaper**: use the toolbar's "Import Folder" or "Add File"
+  button to point LiveWall at a folder of images/videos, or a single file.
+  A still image (`.jpg`/`.png`) is the simplest first test; a video
+  (`.mp4`/`.webm`/`.mkv`/`.gif`) tests the more complex animated-wallpaper
+  path.
+- **Apply it**: select a wallpaper in the list and click "Apply" — it should
+  become your actual Windows desktop background.
+- **Quick picker**: in Settings, turn on "Run LiveWall in the system tray at
+  login," then press **Win+Shift+B** anywhere — a small search-and-apply
+  popup should appear (Enter applies, Esc cancels).
+- **Settings**: open it via the gear icon or the tray icon's menu, and try
+  toggling the automation options (random rotation, battery saver, restore
+  wallpaper at login).
+
+### If something goes wrong
+
+Please [open an issue](../../issues) with: what you were doing, what you
+expected vs. what happened, a screenshot if it's visual, and your Windows
+version (Settings → System → About). The parts most likely to need a fix on
+first real-world use are: **animated wallpapers not appearing** (or
+appearing as a separate window instead of the desktop background), **the
+Win+Shift+B hotkey not responding**, and **the scheduled automation
+(rotation/battery saver/restore-at-login) not firing** — but please report
+anything that seems off, however small.
+
+### How it works (for reference, not required reading for testing)
+
+It covers everything the Linux CLI does: browse/search/tag/favorite the
+library, apply wallpapers, a settings screen, and toggles for the automation
+Linux installs via `livewall install ...` (random rotation, restore-on-login,
+battery-saver), backed by Windows Task Scheduler instead of systemd.
 
 - **Animated wallpapers** render through a bundled `mpv.exe`, positioned
   behind your desktop icons using the same technique tools like Wallpaper
   Engine and Lively Wallpaper use (an unofficial but well-established
   Windows trick — see `backends/windows_mpv.py` for the details). Static
   images use the plain Windows wallpaper API.
-- **Quick picker**: press **Win+Shift+B** anywhere to pop up a small
-  search-and-apply window (the same idea as the Linux `livewall picker`,
-  Enter to apply, Esc to cancel). Unlike Linux, where Hyprland itself owns
+- **Quick picker** (Win+Shift+B): unlike Linux, where Hyprland itself owns
   that keybind permanently, Windows only delivers it while LiveWall is
   running — so the app needs to run in the system tray in the background
-  for the hotkey to always work. Turn this on in Settings ("Run LiveWall in
-  the system tray at login").
+  for the hotkey to always work.
 - **Settings** (gear icon / tray menu → Open LiveWall → Settings) covers the
   same fields as the Linux GUI, plus a Windows-only "Startup" section for
   the tray/hotkey autostart and restore-on-login toggles.
-
-⚠️ **Windows support is new and has not yet been tested on a real Windows
-machine** — it was built from documented Win32 APIs and the same technique
-proven live-wallpaper tools already use, but hasn't been run end-to-end on
-actual Windows yet. If something doesn't work, please
-[open an issue](../../issues) — animated-wallpaper rendering, the global
-hotkey, and the scheduled-task automation are the parts most likely to need
-a fix once tried on real hardware.
 
 ### Settings
 
