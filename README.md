@@ -108,6 +108,9 @@ livewall ensure-playing              # run that same check right now (what boot-
 livewall power-check                 # one battery-saver check-and-act cycle (what its timer calls, mpvpaper/capability-based backends only)
 livewall install desktop-entry       # add LiveWall to your app launcher (opt-in, confirms first)
 livewall uninstall desktop-entry     # remove it from the launcher
+livewall install update-checker      # opt-in login-time auto-update check, see "Auto-update" below
+livewall uninstall update-checker    # remove it
+livewall update-check                # run that same check right now (what the login timer calls)
 ```
 
 ### GUI (`livewall gui`)
@@ -379,6 +382,40 @@ machine — real *multi*-monitor behavior hasn't been confirmed. On Windows
 (`windows-mpv`) this is unverified entirely, same caveat as the rest of
 [Windows](#windows) support; per-monitor *static* images aren't supported
 there yet (animated wallpapers only).
+
+## Auto-update
+
+LiveWall can keep itself up to date without a manual `git pull` or
+re-download, and shows a small "LiveWall was updated!" banner (in either
+GUI) the next time it launches after doing so — click "What's new?" for
+the changelog.
+
+**Linux** runs directly from this git checkout, so an "update" here is
+just a `git fetch` + fast-forward `git pull` of that checkout, gated
+behind real safety rails since this is also the directory development
+happens in: it never touches anything if `git status` isn't clean, and
+never does anything other than a plain fast-forward (no merges, no
+rebases). Opt in with:
+
+```bash
+livewall install update-checker
+```
+
+This installs `livewall-update.service`, a login-time systemd `--user`
+oneshot (same shape as the other opt-in units below) that runs `livewall
+update-check`. Uninstall with `livewall uninstall update-checker`;
+`livewall doctor` reports whether it's installed.
+
+**Windows** checks GitHub's latest release against the running build's
+version at every launch (no opt-in — there's no separate scheduled task
+for this, since one would race with the existing login-autostart entry;
+see the Windows section above for why a second Task Scheduler entry
+around login is a bad idea here). If there's a newer release, it
+downloads and stages the zip, then hands off to a small batch-file helper
+that waits for LiveWall to exit, swaps the install directory (backing up
+the previous one to `...LiveWall.backup` rather than deleting it), and
+relaunches automatically. ⚠️ Unverified beyond the download/stage step —
+same caveat as the rest of [Windows](#windows) support.
 
 ## Battery saver
 
