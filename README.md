@@ -260,6 +260,22 @@ No giant single file — each module owns one concern:
 | `windows/` | Task Scheduler / Start Menu / global-hotkey / battery-reading equivalents of `systemd.py`/`hypr.py`/`desktop.py`/`power_saver.py`'s battery read, for Windows |
 | `gui_qt/` | the Windows-native GUI (PySide6) — library browser, settings, quick picker, tray+hotkey |
 
+## Testing
+
+```bash
+uv sync --group test
+uv run pytest
+```
+
+Covers `config.py`, `database.py`/`library.py`, the backend registry, all
+three backends (mocked subprocess — none of this needs `mpv`/`mpvpaper`/
+`caelestia` actually installed), and `power_saver.py`'s pause/resume
+hysteresis. Every test runs fully isolated from your real
+`~/.config/livewall`/`~/.local/share/livewall`/`~/.cache/livewall`.
+
+Runs automatically on every push/PR via
+[`.github/workflows/test.yml`](.github/workflows/test.yml).
+
 ## Data locations
 
 **Linux:**

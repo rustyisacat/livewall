@@ -27,6 +27,7 @@ livewall-windows-gui = "livewall.gui_qt.app:run"
 [dependency-groups]
 # Build-time only — not something an end user installing LiveWall needs.
 windows-build = ["pyinstaller>=6.0; sys_platform == 'win32'"]
+test = ["pytest>=8.0"]
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]
@@ -34,3 +35,6 @@ build-backend = "uv_build"
 
 [tool.uv_build]
 module-name = "livewall"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
