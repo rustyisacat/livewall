@@ -10,6 +10,7 @@ Linux side has one `livewall` binary for both `livewall gui` and
 
 from __future__ import annotations
 
+import logging
 import sys
 
 from PySide6.QtGui import QIcon
@@ -41,6 +42,31 @@ def _icon_path() -> str | None:
     return str(ico) if ico.exists() else None
 
 
+def _check_and_apply_update() -> None:
+    """Best-effort self-update, run once at startup before anything else
+    opens. Only ever does anything for a packaged build — see
+    windows/updater.py's module docstring for why this doesn't run as its
+    own scheduled task the way the Linux side's update-checker does."""
+    if not getattr(sys, "frozen", False):
+        return
+
+    from livewall.windows import updater as win_updater
+
+    try:
+        info = win_updater.check_for_update()
+        if info is None:
+            return
+        staging = win_updater.download_and_stage(info)
+        if staging is None:
+            return
+        if win_updater.apply_and_relaunch(staging, info, tray="--tray" in sys.argv):
+            # The batch helper is now waiting for this PID to exit before
+            # it swaps the install directory and relaunches.
+            sys.exit(0)
+    except Exception:
+        logging.getLogger(__name__).exception("Self-update check failed unexpectedly")
+
+
 def run() -> None:
     # Hidden mode used by backends/windows_mpv.py to acquire the
     # WorkerW-parented window when running from a *frozen* build — there's
@@ -60,6 +86,8 @@ def run() -> None:
         sys.exit(cli_main(sys.argv[1:]))
 
     setup_logging()
+    _check_and_apply_update()
+
     config = Config.load()
     try:
         backend = get_backend(config.backend)
