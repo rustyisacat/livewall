@@ -130,6 +130,46 @@ class TextPromptScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class MonitorPickerScreen(ModalScreen[str | None]):
+    """Which target to apply a wallpaper to — only ever pushed when the
+    backend supports per-monitor wallpapers and more than one monitor was
+    detected; a single-monitor system (or a backend without the
+    capability) never sees this, applying everywhere exactly as before.
+
+    Dismisses with "ALL" for the mirrored case, a real monitor name for a
+    specific one, or None if cancelled — None is deliberately distinct
+    from "ALL" (a real choice to apply everywhere) so the caller can tell
+    "cancelled" from "apply to everything" apart.
+    """
+
+    DEFAULT_CSS = """
+    MonitorPickerScreen { align: center middle; background: $background 60%; }
+    #monitor-box { width: 40; height: auto; background: $surface; border: round $accent; padding: 1 2; }
+    #monitor-box Button { width: 100%; margin-top: 1; }
+    """
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, monitors: list[str]) -> None:
+        super().__init__()
+        self.monitors = monitors
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="monitor-box"):
+            yield Static("Apply to which monitor?")
+            yield Button("All monitors", id="target-ALL", variant="primary")
+            for monitor in self.monitors:
+                yield Button(monitor, id=f"target-{monitor}")
+
+    @on(Button.Pressed)
+    def on_button(self, event: Button.Pressed) -> None:
+        target_id = event.button.id or ""
+        if target_id.startswith("target-"):
+            self.dismiss(target_id.removeprefix("target-"))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SettingsScreen(Screen):
     """Editable view over the persistent Config."""
 
@@ -419,17 +459,35 @@ class LibraryScreen(Screen):
         name = self.selected_name()
         if not name:
             return
-        try:
-            self.app.backend.set_wallpaper(
-                self.library.get(name).file_path, no_smart=self.config.no_smart_colours
-            )
-        except BackendUnavailableError as exc:
-            self.notify(str(exc), severity="error")
-            return
-        except (FileNotFoundError, BackendApplyError, LiveWallError) as exc:
-            self.notify(str(exc), severity="error")
-            return
-        self.notify(f"Applied '{name}'")
+
+        def apply_to(target: str | None) -> None:
+            if target is None:
+                return  # cancelled out of the monitor picker
+            monitor = None if target == "ALL" else target
+            try:
+                if monitor is None:
+                    self.app.backend.set_wallpaper(
+                        self.library.get(name).file_path, no_smart=self.config.no_smart_colours
+                    )
+                else:
+                    self.app.backend.set_wallpaper_for_monitor(
+                        monitor, self.library.get(name).file_path, no_smart=self.config.no_smart_colours
+                    )
+            except BackendUnavailableError as exc:
+                self.notify(str(exc), severity="error")
+                return
+            except (FileNotFoundError, BackendApplyError, LiveWallError) as exc:
+                self.notify(str(exc), severity="error")
+                return
+            self.notify(f"Applied '{name}'" + (f" on {monitor}" if monitor else ""))
+
+        backend = self.app.backend
+        if backend.supports_per_monitor:
+            monitors = backend.list_monitor_targets()
+            if len(monitors) > 1:
+                self.app.push_screen(MonitorPickerScreen(monitors), apply_to)
+                return
+        apply_to("ALL")
 
     def action_toggle_favorite(self) -> None:
         name = self.selected_name()
