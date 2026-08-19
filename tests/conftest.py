@@ -43,4 +43,8 @@ def redirect_paths(tmp_path, monkeypatch):
 
     monkeypatch.setattr(power_saver, "STATE_FILE", cache_dir / "power_saver_state.json")
 
+    from livewall import updater
+
+    monkeypatch.setattr(updater, "NOTICE_FILE", cache_dir / "update_notice.json")
+
     return tmp_path

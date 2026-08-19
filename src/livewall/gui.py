@@ -10,7 +10,7 @@ from pathlib import Path
 
 from textual import on
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -25,6 +25,7 @@ from textual.widgets import (
     Switch,
 )
 
+from livewall import updater
 from livewall.backends import (
     BackendApplyError,
     BackendUnavailableError,
@@ -167,6 +168,38 @@ class MonitorPickerScreen(ModalScreen[str | None]):
             self.dismiss(target_id.removeprefix("target-"))
 
     def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class UpdateChangelogScreen(ModalScreen[None]):
+    """What changed in the last auto-update — pushed when the "What's
+    new?" banner button on LibraryScreen is clicked."""
+
+    DEFAULT_CSS = """
+    UpdateChangelogScreen { align: center middle; background: $background 60%; }
+    #changelog-box { width: 70; height: auto; max-height: 80%; background: $surface; border: round $accent; padding: 1 2; }
+    #changelog-list { height: auto; max-height: 20; margin-top: 1; }
+    #changelog-buttons { height: auto; align: center middle; margin-top: 1; }
+    """
+    BINDINGS = [("escape", "close", "Close")]
+
+    def __init__(self, changelog: list[str]) -> None:
+        super().__init__()
+        self.changelog = changelog
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="changelog-box"):
+            yield Static("[bold]LiveWall was updated — what's new[/bold]")
+            with VerticalScroll(id="changelog-list"):
+                yield Static("\n".join(self.changelog) or "(no details available)")
+            with Horizontal(id="changelog-buttons"):
+                yield Button("Close", id="close", variant="primary")
+
+    @on(Button.Pressed, "#close")
+    def close_btn(self) -> None:
+        self.dismiss(None)
+
+    def action_close(self) -> None:
         self.dismiss(None)
 
 
@@ -377,6 +410,10 @@ class LibraryScreen(Screen):
     DEFAULT_CSS = """
     LibraryScreen #body { height: 1fr; padding: 1 1 1 2; }
     LibraryScreen #left { width: 1fr; padding-right: 1; }
+    LibraryScreen #update-banner { height: 3; background: $accent; color: $background; padding: 0 1; margin-bottom: 1; }
+    LibraryScreen #update-banner Static { width: 1fr; content-align: left middle; height: 3; }
+    LibraryScreen #update-banner Button { margin-left: 1; }
+    LibraryScreen #update-banner #update-dismiss { min-width: 3; }
     LibraryScreen #search { height: 3; border: round $border-blurred; margin-bottom: 1; }
     LibraryScreen #search:focus { border: round $accent; }
     LibraryScreen #category-row { height: 3; margin-bottom: 1; }
@@ -390,6 +427,7 @@ class LibraryScreen(Screen):
         self.library = library
         self.config = config
         self.active_category: str | None = None
+        self._update_changelog: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -405,6 +443,26 @@ class LibraryScreen(Screen):
 
     def on_mount(self) -> None:
         self.refresh_list()
+        notice = updater.read_and_clear_notice()
+        if notice and notice.get("changelog"):
+            self._update_changelog = notice["changelog"]
+            self.query_one("#left", Vertical).mount(
+                Horizontal(
+                    Static("[bold]LiveWall was updated![/bold]"),
+                    Button("What's new?", id="update-whats-new"),
+                    Button("×", id="update-dismiss"),
+                    id="update-banner",
+                ),
+                before="#search",
+            )
+
+    @on(Button.Pressed, "#update-whats-new")
+    def on_update_whats_new(self) -> None:
+        self.app.push_screen(UpdateChangelogScreen(self._update_changelog))
+
+    @on(Button.Pressed, "#update-dismiss")
+    def on_update_dismiss(self) -> None:
+        self.query_one("#update-banner").remove()
 
     def refresh_list(self, query: str = "") -> None:
         list_view = self.query_one("#wall-list", ListView)
