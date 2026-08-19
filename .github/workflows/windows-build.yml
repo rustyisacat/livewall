@@ -10,6 +10,12 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
+# The default GITHUB_TOKEN is read-only for repo contents unless a workflow
+# explicitly asks for write access — needed here so the "Attach to release"
+# step can actually create/update a GitHub Release (it 403'd without this).
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
