@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Textual](https://img.shields.io/badge/UI-Textual-6C4FD6)
-![Version](https://img.shields.io/badge/version-1.1.2-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 ![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)
 
 ![LiveWall demo — browsing the library, then applying a wallpaper via the quick picker](docs/demo.gif)
@@ -85,8 +85,9 @@ livewall rename OLD NEW
 livewall favorite NAME [--unset]
 livewall tag NAME "tag1, tag2"
 livewall info NAME                   # resolution, duration, size, aspect ratio, ...
-livewall apply NAME [--no-smart]     # --no-smart skips Material You recolouring (caelestia-aw only)
-livewall random [--tag t] [--favorites] [--no-smart]
+livewall apply NAME [--no-smart] [--monitor M]   # --monitor targets one display instead of everywhere (see below)
+livewall random [--tag t] [--favorites] [--no-smart] [--monitor M]
+livewall monitors                    # list monitors --monitor accepts (backend must support it)
 livewall status                      # what the current backend has applied
 livewall preview NAME                # opens in a plain mpv window, not the desktop
 livewall refresh-thumbs              # regenerate caelestia-aw's own video thumbnail cache (caelestia-aw only)
@@ -274,7 +275,8 @@ No giant single file — each module owns one concern:
 | `library.py` | add/remove/rename/import/search/tag/favorite/dedupe, on top of `database.py` + `thumbnail.py` |
 | `backends/` | `WallpaperBackend` interface + `CaelestiaAwBackend`/`MpvpaperBackend`/`WindowsMpvBackend` — LiveWall never renders anything itself, everything routes through whichever backend `config.json` selects |
 | `preview.py` | plain `mpv` window preview — unrelated to whichever backend is active |
-| `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups (Linux) |
+| `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups; also monitor enumeration (`hyprctl monitors -j`) for per-monitor wallpapers (Linux) |
+| `rotation.py` | `livewall random`'s wallpaper-selection logic: repeat avoidance and time-of-day tag rules, kept separate from `cli.py` so it's directly unit-testable |
 | `desktop.py` | opt-in `.desktop` entry + icon so `livewall gui` shows up in your app launcher (Linux) |
 | `doctor.py` | `livewall doctor` health checks across all of the above |
 | `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix, battery-saver timer (Linux) |
@@ -283,7 +285,7 @@ No giant single file — each module owns one concern:
 | `cli.py` | argparse entry point (`livewall ...`) |
 | `gui.py` | Textual library browser (Linux) |
 | `picker.py` | Textual quick picker (Linux) |
-| `windows/` | Task Scheduler / Start Menu / global-hotkey / battery-reading equivalents of `systemd.py`/`hypr.py`/`desktop.py`/`power_saver.py`'s battery read, for Windows |
+| `windows/` | Task Scheduler / Start Menu / global-hotkey / battery-reading / monitor-enumeration equivalents of `systemd.py`/`hypr.py`/`desktop.py`/`power_saver.py`'s battery read, for Windows |
 | `gui_qt/` | the Windows-native GUI (PySide6) — library browser, settings, quick picker, tray+hotkey |
 
 ## Testing
@@ -351,6 +353,32 @@ with a clear error rather than silently falling back to another backend).
 
 Adding a third backend (swww, hyprpaper, swaybg, ...) means writing one
 `WallpaperBackend` implementation in `backends/` — no changes anywhere else.
+
+## Per-monitor wallpapers
+
+`mpvpaper` and `windows-mpv` can give each monitor its own wallpaper
+instead of mirroring one everywhere — `caelestia-aw` can't (its own CLI has
+no per-monitor flag at all). Run `livewall monitors` to list what
+`--monitor` accepts for your current backend, then:
+
+```bash
+livewall apply NAME --monitor eDP-1
+livewall random --monitor eDP-1
+```
+
+Both GUIs' Apply action prompt for a target the same way, but only when
+there's an actual choice to make — a single-monitor system, or a backend
+without this capability, sees no extra prompt at all. Assigning one
+monitor a wallpaper while another is still mirroring everything (`ALL`
+mode) preserves what the other monitors were already showing instead of
+blanking them. Quick pickers (`livewall picker`) always apply to every
+monitor — no target-picker step, to keep them fast.
+
+⚠️ Verified end-to-end on Linux (`mpvpaper`), but only on a single-monitor
+machine — real *multi*-monitor behavior hasn't been confirmed. On Windows
+(`windows-mpv`) this is unverified entirely, same caveat as the rest of
+[Windows](#windows) support; per-monitor *static* images aren't supported
+there yet (animated wallpapers only).
 
 ## Battery saver
 
