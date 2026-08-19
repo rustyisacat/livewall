@@ -45,14 +45,21 @@ jobs:
           # problem, so it's used here instead.
           choco install mpv -y --no-progress
 
-          $candidates = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib\mpv" -Recurse -Filter "mpv.exe" -ErrorAction SilentlyContinue
+          # The "mpv" chocolatey package is itself just a metapackage that
+          # depends on "mpvio.install" for the actual binary — the real
+          # mpv.exe lands under that dependency's own lib subfolder (e.g.
+          # ...\chocolatey\lib\mpvio.install\tools\...), not under
+          # ...\lib\mpv\. Searching the whole lib tree instead of guessing
+          # the exact subfolder makes this resilient to that kind of
+          # packaging detail changing.
+          $candidates = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib" -Recurse -Filter "mpv.exe" -ErrorAction SilentlyContinue
           if (-not $candidates) {
-            Write-Error "choco installed the mpv package but no mpv.exe was found under C:\ProgramData\chocolatey\lib\mpv - the package layout may have changed."
+            Write-Error "choco installed mpv but no mpv.exe was found anywhere under C:\ProgramData\chocolatey\lib - the package layout may have changed."
             exit 1
           }
-          # The chocolatey shim at ...\chocolatey\bin\mpv.exe is a tiny
-          # redirect stub, not the real binary — picking the largest match
-          # under the package's own lib folder gets the actual mpv.exe.
+          # The chocolatey shim at ...\chocolatey\bin\mpv.exe (outside \lib,
+          # so not in this search anyway) is a tiny redirect stub, not the
+          # real binary — picking the largest match is an extra safeguard.
           $mpvExe = ($candidates | Sort-Object Length -Descending | Select-Object -First 1).FullName
 
           New-Item -ItemType Directory -Force -Path packaging/windows/vendor | Out-Null
