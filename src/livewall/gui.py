@@ -36,6 +36,7 @@ from livewall.config import Config, RANDOM_INTERVAL_SECONDS
 from livewall.database import Wallpaper
 from livewall.library import DuplicateWallpaperError, Library, LiveWallError, WallpaperInfo
 from livewall.preview import MpvNotAvailableError, preview as mpv_preview
+from livewall.tui_theme import ACCENT, SUCCESS, install as install_theme
 from livewall.utils import setup_logging
 
 logger = logging.getLogger("livewall.gui")
@@ -56,8 +57,8 @@ class ConfirmScreen(ModalScreen[bool]):
     """Yes/No confirmation dialog."""
 
     DEFAULT_CSS = """
-    ConfirmScreen { align: center middle; }
-    #confirm-box { width: 50; height: auto; border: round $accent; padding: 1 2; }
+    ConfirmScreen { align: center middle; background: $background 60%; }
+    #confirm-box { width: 50; height: auto; background: $surface; border: round $accent; padding: 1 2; }
     #confirm-buttons { height: auto; align: center middle; margin-top: 1; }
     #confirm-buttons Button { margin: 0 1; }
     """
@@ -90,8 +91,8 @@ class TextPromptScreen(ModalScreen[str | None]):
     """A single-line text input prompt."""
 
     DEFAULT_CSS = """
-    TextPromptScreen { align: center middle; }
-    #prompt-box { width: 60; height: auto; border: round $accent; padding: 1 2; }
+    TextPromptScreen { align: center middle; background: $background 60%; }
+    #prompt-box { width: 60; height: auto; background: $surface; border: round $accent; padding: 1 2; }
     #prompt-buttons { height: auto; align: center middle; margin-top: 1; }
     #prompt-buttons Button { margin: 0 1; }
     """
@@ -136,9 +137,12 @@ class SettingsScreen(Screen):
 
     DEFAULT_CSS = """
     SettingsScreen { align: center top; }
-    #settings-box { width: 70; height: auto; margin-top: 2; border: round $accent; padding: 1 2; }
-    .settings-row { height: 3; align: left middle; }
-    .settings-row Label { width: 24; }
+    #settings-box {
+        width: 70; height: auto; margin-top: 2;
+        background: $surface; border: round $accent; padding: 1 2;
+    }
+    .settings-row { height: 3; }
+    .settings-row Label { width: 24; height: 3; content-align: left middle; color: $text-muted; }
     """
 
     def __init__(self) -> None:
@@ -265,8 +269,14 @@ class DetailPane(Vertical):
     """Right-hand pane: thumbnail + metadata for the selected wallpaper."""
 
     DEFAULT_CSS = """
-    DetailPane { width: 46; padding: 1; border-left: solid $panel; }
-    DetailPane #thumb-holder { height: 16; content-align: center middle; }
+    DetailPane {
+        width: 46; padding: 1 2; margin-left: 1;
+        background: $surface; border: round $border-blurred;
+    }
+    DetailPane #thumb-holder {
+        height: 16; content-align: center middle;
+        background: $background; border: round $border-blurred;
+    }
     DetailPane #meta { height: auto; margin-top: 1; }
     """
 
@@ -292,8 +302,12 @@ class DetailPane(Vertical):
         current = self.app.backend.current_path()
         is_current = current is not None and w.file_path == current
         lines = [
-            f"[bold]{w.name}[/bold]" + ("  [green]▶ currently applied[/green]" if is_current else ""),
-            f"Type: {w.kind}  Favorite: {'yes' if w.favorite else 'no'}",
+            f"[bold]{w.name}[/bold]" + (f"  [{SUCCESS}]▶ currently applied[/{SUCCESS}]" if is_current else ""),
+        ]
+        if w.favorite:
+            lines.append(f"[{ACCENT}]★ favorite[/{ACCENT}]")
+        lines += [
+            f"Type: {w.kind}",
             f"Resolution: {info.metadata.resolution}",
             f"Aspect ratio: {info.metadata.aspect_ratio or 'unknown'}",
             f"Duration: {info.duration_human}",
@@ -321,11 +335,14 @@ class LibraryScreen(Screen):
     ]
 
     DEFAULT_CSS = """
-    LibraryScreen #body { height: 1fr; }
-    LibraryScreen #left { width: 1fr; }
-    LibraryScreen #search { dock: top; }
-    LibraryScreen #category-row { height: 3; dock: top; }
+    LibraryScreen #body { height: 1fr; padding: 1 1 1 2; }
+    LibraryScreen #left { width: 1fr; padding-right: 1; }
+    LibraryScreen #search { height: 3; border: round $border-blurred; margin-bottom: 1; }
+    LibraryScreen #search:focus { border: round $accent; }
+    LibraryScreen #category-row { height: 3; margin-bottom: 1; }
     LibraryScreen .category-btn { min-width: 3; height: 3; margin-right: 1; }
+    LibraryScreen #wall-list { height: 1fr; background: $surface; border: round $border-blurred; }
+    LibraryScreen #wall-list > ListItem.-highlight { background: $accent; color: $background; }
     """
 
     def __init__(self, library: Library, config: Config) -> None:
@@ -560,6 +577,7 @@ class LiveWallApp(App):
         self.backend = backend
 
     def on_mount(self) -> None:
+        install_theme(self)
         self.push_screen(LibraryScreen(self.library, self.config))
 
 

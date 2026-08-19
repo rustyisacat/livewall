@@ -9,7 +9,9 @@ authors = [
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
-    "textual>=0.60; sys_platform != 'win32'",
+    # >=1.0, not the old >=0.60 floor: tui_theme.py uses App.register_theme /
+    # App.theme, Textual's Theme API which didn't exist back at 0.60.
+    "textual>=1.0; sys_platform != 'win32'",
     "textual-image>=0.13.2; sys_platform != 'win32'",
     "pyside6>=6.5; sys_platform == 'win32'",
     "pywin32>=306; sys_platform == 'win32'",

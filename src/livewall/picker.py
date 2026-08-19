@@ -14,6 +14,7 @@ from livewall.backends import BackendApplyError, BackendUnavailableError, Wallpa
 from livewall.config import Config
 from livewall.gui import WallpaperItem
 from livewall.library import Library, LiveWallError
+from livewall.tui_theme import install as install_theme
 from livewall.utils import setup_logging
 
 logger = logging.getLogger("livewall.picker")
@@ -26,9 +27,10 @@ class PickerApp(App):
 
     CSS = """
     Screen { align: center middle; }
-    #picker-box { width: 100%; height: 100%; }
-    #search { dock: top; border: round $accent; }
-    ListView { height: 1fr; border: round $panel; }
+    #picker-box { width: 100%; height: 100%; padding: 1; }
+    #search { dock: top; border: round $accent; margin-bottom: 1; }
+    ListView { height: 1fr; background: $surface; border: round $border-blurred; }
+    ListView > ListItem.-highlight { background: $accent; color: $background; }
     """
 
     BINDINGS = [
@@ -59,6 +61,7 @@ class PickerApp(App):
             yield ListView(id="wall-list")
 
     def on_mount(self) -> None:
+        install_theme(self)
         self.refresh_list("")
         self.query_one("#search", Input).focus()
 
