@@ -107,3 +107,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: LiveWall-windows.zip
+          generate_release_notes: true
