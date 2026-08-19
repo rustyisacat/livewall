@@ -235,6 +235,32 @@ Changing "Random interval" here actually installs/removes the
 `livewall install/uninstall systemd`), not just a config value — so don't
 hand-edit `random_interval` in `config.json`, it won't touch the timer.
 
+`livewall random` (and the timer that calls it) also avoids repeats: it
+skips whatever's currently applied plus a short rolling history of recently
+-applied wallpapers, falling back to the full pool only if the filtered-down
+one would otherwise be empty — a small library or a narrow `--tag`/
+favorites-only filter won't fall into an A-B-A-B cycle. Pass `--tag` to
+override everything below for one run.
+
+For time-of-day-aware picks (e.g. cozy in the morning, cyberpunk at night),
+hand-edit `config.json`'s `random_tags` field into `random_time_rules`
+instead — not GUI-exposed yet, only `livewall random`/the rotation timer
+read it:
+
+```json
+"random_time_rules": [
+  {"start": 6, "end": 18, "tags": ["cozy"]},
+  {"start": 18, "end": 6, "tags": ["cyberpunk"]}
+]
+```
+
+Each rule is `{"start": hour, "end": hour, "tags": [...]}` in 24-hour local
+time, half-open on `end` (a `6`-`18` rule matches hour 17 but not 18);
+`start > end` wraps past midnight, like the `18`-`6` rule above. The first
+matching rule wins; an explicit `--tag` on the CLI still overrides every
+rule, and the plain `random_tags` field is still the fallback when no rule
+matches the current hour.
+
 ## Architecture
 
 No giant single file — each module owns one concern:

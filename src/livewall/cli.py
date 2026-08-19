@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-import random as random_module
 import sys
 from pathlib import Path
 
+from livewall import rotation
 from livewall.backends import BackendApplyError, BackendUnavailableError, WallpaperBackend, get_backend
 from livewall.backends.caelestia_aw import CaelestiaAwBackend
 from livewall.config import Config
@@ -19,7 +19,6 @@ from livewall.library import (
     LiveWallError,
     UnsupportedFormatError,
     WallpaperNotFoundError,
-    prefer_non_gif,
 )
 from livewall.preview import MpvNotAvailableError, preview as mpv_preview
 from livewall.utils import setup_logging
@@ -199,18 +198,21 @@ def cmd_apply(args: argparse.Namespace, lib: Library, config: Config, backend: W
 
 
 def cmd_random(args: argparse.Namespace, lib: Library, config: Config, backend: WallpaperBackend) -> int:
-    tags = _split_tags(args.tag) or config.random_tags or None
+    # Precedence: an explicit --tag always wins; otherwise a matching
+    # time-of-day rule; otherwise the static random_tags fallback.
+    tags = (
+        _split_tags(args.tag)
+        or rotation.tags_for_time_rules(config.random_time_rules)
+        or config.random_tags
+        or None
+    )
     favorites_only = args.favorites or config.random_favorites_only
-    candidates = prefer_non_gif(lib.search(tags=tags, favorites_only=favorites_only))
-    if not candidates:
+    wallpaper = rotation.pick_wallpaper(
+        lib, tags=tags, favorites_only=favorites_only, current=backend.current_path()
+    )
+    if wallpaper is None:
         print("No wallpapers match.", file=sys.stderr)
         return 1
-
-    current = backend.current_path()
-    if current is not None and len(candidates) > 1:
-        candidates = [w for w in candidates if w.file_path != current] or candidates
-
-    wallpaper = random_module.choice(candidates)
     return _apply_wallpaper(wallpaper, args.no_smart or config.no_smart_colours, backend)
 
 

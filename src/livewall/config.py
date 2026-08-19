@@ -63,6 +63,11 @@ class Config:
     random_interval: RandomInterval = "off"
     random_favorites_only: bool = False
     random_tags: list[str] = field(default_factory=list)
+    # Time-of-day-aware tag rules for `livewall random`/the rotation timer —
+    # e.g. [{"start": 6, "end": 18, "tags": ["cozy"]}, {"start": 18, "end": 6,
+    # "tags": ["cyberpunk"]}]. Checked before the static random_tags fallback
+    # (see rotation.py); an explicit `--tag` on the CLI still overrides both.
+    random_time_rules: list[dict] = field(default_factory=list)
     no_smart_colours: bool = False
     battery_saver_low: int = 15
     battery_saver_high: int = 25

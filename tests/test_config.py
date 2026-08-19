@@ -10,6 +10,7 @@ def test_defaults():
     assert config.random_interval == "off"
     assert config.random_favorites_only is False
     assert config.random_tags == []
+    assert config.random_time_rules == []
     assert config.no_smart_colours is False
     assert config.battery_saver_low == 15
     assert config.battery_saver_high == 25
@@ -39,6 +40,7 @@ def test_save_then_load_round_trip(redirect_paths):
         random_interval="30m",
         random_favorites_only=True,
         random_tags=["cozy", "space"],
+        random_time_rules=[{"start": 6, "end": 18, "tags": ["cozy"]}],
         no_smart_colours=True,
         battery_saver_low=10,
         battery_saver_high=40,
