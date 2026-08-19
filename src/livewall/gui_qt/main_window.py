@@ -232,12 +232,32 @@ class MainWindow(QMainWindow):
         name = self.selected_name()
         if not name:
             return
+
+        # Only ever asks when there's a real choice to make — a backend
+        # without per-monitor support, or a single-monitor system, applies
+        # everywhere exactly as before with zero extra prompt.
+        monitor: str | None = None
+        if self.backend.supports_per_monitor:
+            monitors = self.backend.list_monitor_targets()
+            if len(monitors) > 1:
+                choice, ok = QInputDialog.getItem(
+                    self, "Apply to which monitor?", "Monitor:", ["All monitors", *monitors], 0, False
+                )
+                if not ok:
+                    return  # cancelled
+                monitor = None if choice == "All monitors" else choice
+
         try:
-            self.backend.set_wallpaper(self.library.get(name).file_path, no_smart=self.config.no_smart_colours)
+            if monitor is None:
+                self.backend.set_wallpaper(self.library.get(name).file_path, no_smart=self.config.no_smart_colours)
+            else:
+                self.backend.set_wallpaper_for_monitor(
+                    monitor, self.library.get(name).file_path, no_smart=self.config.no_smart_colours
+                )
         except (BackendUnavailableError, FileNotFoundError, BackendApplyError, LiveWallError) as exc:
             self.statusBar().showMessage(str(exc), 5000)
             return
-        self.statusBar().showMessage(f"Applied '{name}'", 3000)
+        self.statusBar().showMessage(f"Applied '{name}'" + (f" on {monitor}" if monitor else ""), 3000)
 
     def toggle_favorite(self) -> None:
         name = self.selected_name()
