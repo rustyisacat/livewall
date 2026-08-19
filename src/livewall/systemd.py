@@ -222,6 +222,45 @@ def uninstall_restore_service() -> None:
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
 
 
+UPDATE_SERVICE_NAME = "livewall-update.service"
+UPDATE_SERVICE_FILE = UNIT_DIR / UPDATE_SERVICE_NAME
+
+
+def render_update_service() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Check for and apply a LiveWall update on login\n"
+        "After=graphical-session.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        # Unlike restore/boot-fix, `git pull` never forks a detached child
+        # process — nothing here needs to survive past ExecStart exiting,
+        # so the default KillMode=control-group is fine as-is.
+        f"ExecStart={_livewall_bin()} update-check\n\n"
+        "[Install]\n"
+        "WantedBy=graphical-session.target\n"
+    )
+
+
+def is_update_checker_installed() -> bool:
+    return UPDATE_SERVICE_FILE.exists()
+
+
+def install_update_checker() -> None:
+    UNIT_DIR.mkdir(parents=True, exist_ok=True)
+    UPDATE_SERVICE_FILE.write_text(render_update_service())
+    logger.info("Wrote %s", UPDATE_SERVICE_FILE)
+
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now", UPDATE_SERVICE_NAME], check=True)
+
+
+def uninstall_update_checker() -> None:
+    subprocess.run(["systemctl", "--user", "disable", UPDATE_SERVICE_NAME], capture_output=True)
+    UPDATE_SERVICE_FILE.unlink(missing_ok=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+
+
 POWER_SAVER_SERVICE_NAME = "livewall-power-saver.service"
 POWER_SAVER_TIMER_NAME = "livewall-power-saver.timer"
 POWER_SAVER_SERVICE_FILE = UNIT_DIR / POWER_SAVER_SERVICE_NAME

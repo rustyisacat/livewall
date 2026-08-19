@@ -717,6 +717,49 @@ def cmd_uninstall_restore_on_boot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_update_check(args: argparse.Namespace) -> int:
+    from livewall import updater
+
+    result = updater.check_and_apply()
+    if result is None:
+        print("No update applied (already up to date, or it wasn't safe to update automatically).")
+        return 0
+    print(f"Updated: {len(result.changelog)} new commit(s) ({result.old_sha[:7]}..{result.new_sha[:7]}).")
+    return 0
+
+
+def cmd_install_update_checker(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    print(
+        "This will install a systemd --user service that checks for and applies "
+        "a LiveWall update on every login — a plain `git pull --ff-only` in "
+        "~/Projects/livewall, skipped automatically if the checkout has "
+        "uncommitted changes or has diverged from its upstream:"
+    )
+    print(f"\n  {systemd.UPDATE_SERVICE_FILE}\n{systemd.render_update_service()}")
+    reply = input("Install and enable it now? [y/N] ").strip().lower()
+    if reply != "y":
+        print("Skipped.")
+        return 1
+
+    systemd.install_update_checker()
+    print(f"Installed and enabled {systemd.UPDATE_SERVICE_NAME}.")
+    return 0
+
+
+def cmd_uninstall_update_checker(args: argparse.Namespace) -> int:
+    from livewall import systemd
+
+    if not systemd.is_update_checker_installed():
+        print("The update checker is not installed.")
+        return 0
+
+    systemd.uninstall_update_checker()
+    print(f"Stopped and removed {systemd.UPDATE_SERVICE_NAME}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="livewall", description="Live wallpaper manager")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -794,6 +837,10 @@ def build_parser() -> argparse.ArgumentParser:
         "restore",
         help="Re-apply the last wallpaper (no-op under backends that already restore themselves; used by restore-on-boot)",
     )
+    sub.add_parser(
+        "update-check",
+        help="Check for and apply a LiveWall update (git pull --ff-only; used by the update checker)",
+    )
 
     p_preview = sub.add_parser("preview", help="Preview a wallpaper in a normal mpv window")
     p_preview.add_argument("name")
@@ -827,6 +874,10 @@ def build_parser() -> argparse.ArgumentParser:
         "restore-on-boot",
         help="Re-apply your last wallpaper on login (needed for mpvpaper; harmless no-op under caelestia-aw)",
     )
+    install_sub.add_parser(
+        "update-checker",
+        help="Check for and apply a LiveWall update on every login (git pull --ff-only, skipped if unsafe)",
+    )
 
     p_uninstall = sub.add_parser("uninstall", help="Remove optional integrations")
     uninstall_sub = p_uninstall.add_subparsers(dest="uninstall_target", required=True)
@@ -835,6 +886,7 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall_sub.add_parser("battery-saver", help="Revert the battery saver (QML patch or timer, whichever is installed)")
     uninstall_sub.add_parser("boot-fix", help="Remove the boot-time auto-restart")
     uninstall_sub.add_parser("restore-on-boot", help="Remove the login wallpaper-restore service")
+    uninstall_sub.add_parser("update-checker", help="Stop and remove the login update checker")
     uninstall_sub.add_parser("desktop-entry", help="Remove LiveWall from your app launcher")
 
     return parser
@@ -869,6 +921,15 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_install_restore_on_boot(args)
     if args.command == "uninstall" and args.uninstall_target == "restore-on-boot":
         return cmd_uninstall_restore_on_boot(args)
+    if args.command == "update-check":
+        # Deliberately dispatched before backend/config construction below —
+        # a git pull doesn't need either, and (like picker's non-fatal
+        # backend handling) this should work even if config.json is broken.
+        return cmd_update_check(args)
+    if args.command == "install" and args.install_target == "update-checker":
+        return cmd_install_update_checker(args)
+    if args.command == "uninstall" and args.uninstall_target == "update-checker":
+        return cmd_uninstall_update_checker(args)
 
     lib = Library()
     config = Config.load()

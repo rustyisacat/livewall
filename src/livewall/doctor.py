@@ -94,6 +94,7 @@ def run(backend: WallpaperBackend) -> list[Check]:
         ("Boot-fix service", systemd.is_boot_fix_installed(), systemd.BOOT_FIX_SERVICE_NAME),
         ("Power-saver timer", systemd.is_power_saver_installed(), systemd.POWER_SAVER_TIMER_NAME),
         ("Restore-on-boot service", systemd.is_restore_installed(), systemd.RESTORE_SERVICE_NAME),
+        ("Update checker", systemd.is_update_checker_installed(), systemd.UPDATE_SERVICE_NAME),
     ):
         if not installed:
             if label == "Restore-on-boot service" and not backend.restores_on_login:
