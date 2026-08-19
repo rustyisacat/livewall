@@ -30,14 +30,14 @@ def redirect_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LIBRARY_FILE", data_dir / "library.json")
     monkeypatch.setattr(config, "LOG_FILE", cache_dir / "livewall.log")
 
-    # backends/mpvpaper.py binds its own STATE_FILE/IPC_SOCKET/STDERR_LOG
-    # from CACHE_DIR at import time — redirect those too so backend tests
-    # never touch a real cache dir either.
+    # backends/mpvpaper.py binds its own STATE_FILE/CACHE_DIR from
+    # livewall.config at import time — redirect those too so backend tests
+    # never touch a real cache dir either. CACHE_DIR is what
+    # _ipc_socket()/_stderr_log() derive each target's own paths from.
     from livewall.backends import mpvpaper
 
     monkeypatch.setattr(mpvpaper, "STATE_FILE", cache_dir / "mpvpaper_state.json")
-    monkeypatch.setattr(mpvpaper, "IPC_SOCKET", cache_dir / "mpvpaper.sock")
-    monkeypatch.setattr(mpvpaper, "STDERR_LOG", cache_dir / "mpvpaper_stderr.log")
+    monkeypatch.setattr(mpvpaper, "CACHE_DIR", cache_dir)
 
     from livewall import power_saver
 

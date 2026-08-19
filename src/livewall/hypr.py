@@ -7,12 +7,16 @@ touches gets a one-time ``.livewall.bak`` copy first.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_MONITORS_TIMEOUT_SECONDS = 5
 
 HYPR_DIR = Path.home() / ".config" / "hypr"
 VARIABLES_FILE = HYPR_DIR / "variables.lua"
@@ -92,6 +96,23 @@ def repair() -> bool:
     _backup(KEYBINDS_FILE)
     KEYBINDS_FILE.write_text(text.replace(_OLD_PICKER_EXEC_CMD, PICKER_EXEC_CMD))
     return True
+
+
+def list_monitors() -> list[str]:
+    """Output names (e.g. "eDP-1", "DP-2") for backends/mpvpaper.py's
+    per-monitor targeting. Empty on anything going wrong — a missing
+    `hyprctl`, a non-Hyprland compositor, or unparseable output are all
+    "nothing to offer", not an error worth surfacing."""
+    try:
+        result = subprocess.run(
+            ["hyprctl", "monitors", "-j"],
+            capture_output=True, text=True, timeout=_MONITORS_TIMEOUT_SECONDS, check=True,
+        )
+        data = json.loads(result.stdout)
+    except (subprocess.SubprocessError, OSError, json.JSONDecodeError) as exc:
+        logger.debug("Could not list Hyprland monitors: %s", exc)
+        return []
+    return [m["name"] for m in data if "name" in m]
 
 
 def _backup(path: Path) -> None:

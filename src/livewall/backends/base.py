@@ -40,6 +40,11 @@ class WallpaperBackend(ABC):
     supports_restart: ClassVar[bool] = False
     supports_thumbnail_refresh: ClassVar[bool] = False
     supports_boot_fix: ClassVar[bool] = False
+    # True means this backend can assign a *different* wallpaper to each
+    # monitor (see list_monitor_targets()/set_wallpaper_for_monitor() etc.
+    # below) — distinct from supports_multi_monitor above, which only means
+    # "renders across every attached display" (the same clip, mirrored).
+    supports_per_monitor: ClassVar[bool] = False
     # Whether this backend already re-applies the last wallpaper on login by
     # itself (e.g. by watching a state file its own shell reads on startup).
     # False means LiveWall needs to do that explicitly — see last_applied_path().
@@ -90,3 +95,25 @@ class WallpaperBackend(ABC):
 
     def ensure_playing(self) -> str:
         raise NotImplementedError
+
+    # Per-monitor — only call these after checking supports_per_monitor.
+    def list_monitor_targets(self) -> list[str]:
+        """Monitor identifiers this backend can target individually (e.g.
+        Hyprland output names, Windows device names) — empty if detection
+        isn't possible right now. Never includes the implicit "ALL" target
+        that the plain set_wallpaper()/current_path()/etc. above already
+        cover."""
+        return []
+
+    def set_wallpaper_for_monitor(self, monitor: str, path: Path, *, no_smart: bool = False) -> None:
+        raise NotImplementedError
+
+    def current_path_for_monitor(self, monitor: str) -> Path | None:
+        raise NotImplementedError
+
+    def last_applied_paths_by_monitor(self) -> dict[str, Path]:
+        """Per-monitor counterpart to last_applied_path() — what
+        restore-on-boot should re-apply to each monitor. Empty when nothing
+        is in per-monitor mode (the plain last_applied_path() covers the
+        ALL/mirrored case)."""
+        return {}

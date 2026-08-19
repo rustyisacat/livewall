@@ -56,11 +56,10 @@ from pathlib import Path
 from livewall.backends import mpvpaper
 
 mpvpaper.STATE_FILE = Path(sys.argv[1])
-mpvpaper.IPC_SOCKET = Path(sys.argv[2])
-mpvpaper.STDERR_LOG = Path(sys.argv[3])
+mpvpaper.CACHE_DIR = Path(sys.argv[1]).parent
 
 backend = mpvpaper.MpvpaperBackend()
-backend.set_wallpaper(Path(sys.argv[4]))
+backend.set_wallpaper(Path(sys.argv[2]))
 # Exit immediately — this stands in for the short-lived CLI command or the
 # boot-time systemd service, which is exactly what triggered the original bug.
 """
@@ -81,8 +80,6 @@ def test_mpvpaper_survives_caller_exit(tmp_path):
     runner.write_text(RUNNER)
 
     state_file = tmp_path / "state.json"
-    ipc_socket = tmp_path / "ipc.sock"
-    stderr_log = tmp_path / "stderr.log"
 
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
@@ -91,12 +88,12 @@ def test_mpvpaper_survives_caller_exit(tmp_path):
     # wallpaper and exits immediately, exactly like `livewall apply` or
     # `livewall restore` do.
     subprocess.run(
-        [sys.executable, str(runner), str(state_file), str(ipc_socket), str(stderr_log), str(fake_video)],
+        [sys.executable, str(runner), str(state_file), str(fake_video)],
         env=env, timeout=10, check=True,
     )
 
     state = json.loads(state_file.read_text())
-    pid = state["pid"]
+    pid = state["ALL"]["pid"]
 
     try:
         # The original bug killed the renderer within a couple of seconds
@@ -120,10 +117,15 @@ def test_mpvpaper_survives_caller_exit(tmp_path):
             pass
 
 
-def test_mpvpaper_set_wallpaper_never_uses_unread_stderr_pipe():
-    source = inspect.getsource(mpvpaper.MpvpaperBackend.set_wallpaper)
-    assert "subprocess.Popen" in source, "sanity check: set_wallpaper should still spawn mpvpaper directly"
+def test_mpvpaper_spawn_never_uses_unread_stderr_pipe():
+    # set_wallpaper()/set_wallpaper_for_monitor() both delegate the actual
+    # subprocess spawn to _spawn() — that's the one call site that matters.
+    source = inspect.getsource(mpvpaper.MpvpaperBackend._spawn)
+    assert "subprocess.Popen" in source, "sanity check: _spawn should still spawn mpvpaper directly"
     assert "stderr=subprocess.PIPE" not in source
+
+    for method in (mpvpaper.MpvpaperBackend.set_wallpaper, mpvpaper.MpvpaperBackend.set_wallpaper_for_monitor):
+        assert "_spawn(" in inspect.getsource(method), f"{method.__name__} should route through _spawn()"
 
 
 def test_windows_mpv_set_wallpaper_never_uses_unread_stderr_pipe():
