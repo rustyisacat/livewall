@@ -1,23 +1,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3b4a6b"/>
-      <stop offset="1" stop-color="#1f2739"/>
+      <stop offset="0" stop-color="#3a3f8f"/>
+      <stop offset="1" stop-color="#1b1e3f"/>
     </linearGradient>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#6fa3d8"/>
-      <stop offset="1" stop-color="#a9d6e8"/>
+      <stop offset="0" stop-color="#4f6fd8"/>
+      <stop offset="1" stop-color="#8fb4f0"/>
+    </linearGradient>
+    <linearGradient id="peakBack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3a6b"/>
+      <stop offset="1" stop-color="#1d2750"/>
+    </linearGradient>
+    <linearGradient id="peakFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232c5c"/>
+      <stop offset="1" stop-color="#161a3a"/>
     </linearGradient>
   </defs>
 
-  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
+  <!-- App-icon container -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
 
-  <rect x="18" y="20" width="92" height="70" rx="8" fill="url(#sky)"/>
-  <circle cx="80" cy="38" r="9" fill="#ffe6a7"/>
-  <path d="M18 78 L44 54 L62 70 L78 50 L110 80 L110 82 A8 8 0 0 1 102 90 H26 A8 8 0 0 1 18 82 Z" fill="#2f5d4f"/>
-  <path d="M18 82 L44 60 L62 74 L78 58 L110 84 A8 8 0 0 1 102 90 H26 A8 8 0 0 1 18 82 Z" fill="#3f7a63"/>
+  <!-- Picture frame: bold, few shapes, reads clean at 16px -->
+  <rect x="16" y="18" width="80" height="62" rx="10" fill="url(#sky)"/>
+  <circle cx="70" cy="36" r="10" fill="#ffd76a"/>
+  <path d="M16 68 L38 46 L54 60 L70 42 L96 64 L96 70 A10 10 0 0 1 86 80 H26 A10 10 0 0 1 16 70 Z" fill="url(#peakBack)"/>
+  <path d="M16 72 L36 54 L54 66 L70 50 L96 72 A10 10 0 0 1 86 80 H26 A10 10 0 0 1 16 72 Z" fill="url(#peakFront)"/>
 
-  <circle cx="64" cy="98" r="22" fill="#1f2739" opacity="0.55"/>
-  <circle cx="64" cy="98" r="22" fill="none" stroke="#f4f7fb" stroke-width="3"/>
-  <path d="M58 88 L76 98 L58 108 Z" fill="#f4f7fb"/>
+  <!-- Play badge, corner-anchored so it never competes with the scene -->
+  <circle cx="92" cy="88" r="26" fill="#1b1e3f"/>
+  <circle cx="92" cy="88" r="26" fill="#ff7a4d"/>
+  <path d="M83 76 L104 88 L83 100 Z" fill="#fbf7ff"/>
 </svg>

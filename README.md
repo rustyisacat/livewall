@@ -1,6 +1,7 @@
 # LiveWall
 
 ![Platform](https://img.shields.io/badge/platform-Hyprland-58E1FF?logo=linux&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Textual](https://img.shields.io/badge/UI-Textual-6C4FD6)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
@@ -8,10 +9,11 @@
 
 ![LiveWall demo — browsing the library, then applying a wallpaper via the quick picker](docs/demo.gif)
 
-A wallpaper *library manager* for Hyprland, with the actual rendering done by
-a pluggable backend — [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw)
-by default, or [mpvpaper](https://github.com/GhostNaN/mpvpaper) if you're not
-running [Caelestia](https://github.com/caelestia-dots/caelestia).
+A wallpaper *library manager* for Hyprland and Windows, with the actual
+rendering done by a pluggable backend — [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw)
+by default on Linux, [mpvpaper](https://github.com/GhostNaN/mpvpaper) if
+you're not running [Caelestia](https://github.com/caelestia-dots/caelestia),
+or a native mpv-based backend on Windows (see [Windows](#windows) below).
 
 caelestia-aw already renders animated (mp4/webm/mkv/gif) and static wallpapers
 natively inside the Caelestia shell — its own picker, thumbnailing, Material
@@ -19,11 +21,16 @@ You theming, battery/fullscreen pausing, and hardware decoding. LiveWall
 doesn't duplicate any of that. It adds the things neither backend has a
 concept of: **tags, favorites, search, duplicate detection, a proper library
 browser, and scheduled random rotation** — then applies wallpapers through
-whichever backend `config.json`'s `backend` field points to (`caelestia-aw`
-or `mpvpaper`; see [Backends](#backends) below).
+whichever backend `config.json`'s `backend` field points to (`caelestia-aw`,
+`mpvpaper`, or `windows-mpv`; see [Backends](#backends) below).
+
+On Linux this is a terminal app; on Windows it's a native desktop GUI (no
+terminal involved at all) that covers everything the Linux CLI does — see
+[Windows](#windows).
 
 ## Requirements
 
+**Linux:**
 - Arch Linux, Hyprland, Wayland
 - A wallpaper backend: [caelestia-aw](https://github.com/AdiAmbassador/caelestia-aw)
   installed and patched in (default), or [mpvpaper](https://github.com/GhostNaN/mpvpaper)
@@ -32,7 +39,14 @@ or `mpvpaper`; see [Backends](#backends) below).
 - `zenity` (optional, only for the GUI's native "Add File" dialog)
 - Python 3.12+, [`uv`](https://docs.astral.sh/uv/)
 
+**Windows:**
+- Windows 10 or 11
+- Nothing else — the packaged `.exe` bundles everything it needs (including
+  `mpv.exe`), no Python/uv install required
+
 ## Install
+
+### Linux
 
 ```bash
 git clone <this repo> ~/Projects/livewall
@@ -50,6 +64,12 @@ Pull in whatever's already sitting in Caelestia's own wallpapers folder
 ```bash
 livewall sync
 ```
+
+### Windows
+
+Download the latest `LiveWall-windows.zip` from
+[Releases](../../releases), extract it anywhere, and run `LiveWall.exe`.
+That's it — see [Windows](#windows) below for how it works.
 
 ## Usage
 
@@ -115,6 +135,40 @@ have — its picker can't filter by tag or favorite.
 After `livewall install hyprland`, `Super+Shift+B` opens it in a centered
 floating `foot` window.
 
+## Windows
+
+Windows users get a native desktop GUI, not a terminal app — double-click
+`LiveWall.exe` and it opens the library browser directly, no `livewall`
+command needed for day-to-day use. It covers everything the Linux CLI does:
+browse/search/tag/favorite the library, apply wallpapers, a settings screen,
+and toggles for the automation Linux installs via `livewall install ...`
+(random rotation, restore-on-login, battery-saver), backed by Windows Task
+Scheduler instead of systemd.
+
+- **Animated wallpapers** render through a bundled `mpv.exe`, positioned
+  behind your desktop icons using the same technique tools like Wallpaper
+  Engine and Lively Wallpaper use (an unofficial but well-established
+  Windows trick — see `backends/windows_mpv.py` for the details). Static
+  images use the plain Windows wallpaper API.
+- **Quick picker**: press **Win+Shift+B** anywhere to pop up a small
+  search-and-apply window (the same idea as the Linux `livewall picker`,
+  Enter to apply, Esc to cancel). Unlike Linux, where Hyprland itself owns
+  that keybind permanently, Windows only delivers it while LiveWall is
+  running — so the app needs to run in the system tray in the background
+  for the hotkey to always work. Turn this on in Settings ("Run LiveWall in
+  the system tray at login").
+- **Settings** (gear icon / tray menu → Open LiveWall → Settings) covers the
+  same fields as the Linux GUI, plus a Windows-only "Startup" section for
+  the tray/hotkey autostart and restore-on-login toggles.
+
+⚠️ **Windows support is new and has not yet been tested on a real Windows
+machine** — it was built from documented Win32 APIs and the same technique
+proven live-wallpaper tools already use, but hasn't been run end-to-end on
+actual Windows yet. If something doesn't work, please
+[open an issue](../../issues) — animated-wallpaper rendering, the global
+hotkey, and the scheduled-task automation are the parts most likely to need
+a fix once tried on real hardware.
+
 ### Settings
 
 `livewall gui` → `s`. Besides the wallpaper backend itself, LiveWall only
@@ -146,27 +200,37 @@ No giant single file — each module owns one concern:
 | `database.py` | `Wallpaper` dataclass + JSON-backed CRUD store |
 | `thumbnail.py` | ffprobe metadata, ffmpeg thumbnail generation/caching |
 | `library.py` | add/remove/rename/import/search/tag/favorite/dedupe, on top of `database.py` + `thumbnail.py` |
-| `backends/` | `WallpaperBackend` interface + `CaelestiaAwBackend`/`MpvpaperBackend` — LiveWall never renders anything itself, everything routes through whichever backend `config.json` selects |
+| `backends/` | `WallpaperBackend` interface + `CaelestiaAwBackend`/`MpvpaperBackend`/`WindowsMpvBackend` — LiveWall never renders anything itself, everything routes through whichever backend `config.json` selects |
 | `preview.py` | plain `mpv` window preview — unrelated to whichever backend is active |
-| `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups |
-| `desktop.py` | opt-in `.desktop` entry + icon so `livewall gui` shows up in your app launcher |
+| `hypr.py` | opt-in Hyprland keybind/window-rule installer, with backups (Linux) |
+| `desktop.py` | opt-in `.desktop` entry + icon so `livewall gui` shows up in your app launcher (Linux) |
 | `doctor.py` | `livewall doctor` health checks across all of the above |
-| `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix, battery-saver timer |
+| `systemd.py` | opt-in systemd `--user` units: random rotation, periodic sync, boot-time pause-bug fix, battery-saver timer (Linux) |
 | `battery.py` | opt-in `WallpaperPauser.qml` patch for battery-percentage pause, caelestia-aw only (see below) |
-| `power_saver.py` | backend-agnostic battery-percentage pause/resume, for any backend with `supports_pause`/`supports_resume` (currently mpvpaper) — see below |
+| `power_saver.py` | backend-agnostic battery-percentage pause/resume, for any backend with `supports_pause`/`supports_resume` (mpvpaper, windows-mpv) — see below |
 | `cli.py` | argparse entry point (`livewall ...`) |
-| `gui.py` | Textual library browser |
-| `picker.py` | Textual quick picker |
+| `gui.py` | Textual library browser (Linux) |
+| `picker.py` | Textual quick picker (Linux) |
+| `windows/` | Task Scheduler / Start Menu / global-hotkey / battery-reading equivalents of `systemd.py`/`hypr.py`/`desktop.py`/`power_saver.py`'s battery read, for Windows |
+| `gui_qt/` | the Windows-native GUI (PySide6) — library browser, settings, quick picker, tray+hotkey |
 
 ## Data locations
+
+**Linux:**
 
 - `~/.config/livewall/config.json` — settings
 - `~/.local/share/livewall/library.json` — wallpaper metadata (tags, favorites, hashes)
 - `~/.cache/livewall/thumbnails/` — LiveWall's own thumbnail cache (independent of caelestia-aw's own `~/.cache/caelestia/videothumbs/`)
 
+**Windows:**
+
+- `%APPDATA%\LiveWall\config.json` — settings
+- `%APPDATA%\LiveWall\library.json` — wallpaper metadata (tags, favorites, hashes)
+- `%LOCALAPPDATA%\LiveWall\cache\thumbnails\` — thumbnail cache
+
 LiveWall never moves or copies your wallpaper files — the library just
 stores paths into wherever they already live (by default,
-`~/Pictures/Wallpapers`, same as caelestia-aw).
+`~/Pictures/Wallpapers` on Linux, your Pictures folder on Windows).
 
 ## Backends
 
@@ -187,6 +251,15 @@ with a clear error rather than silently falling back to another backend).
   (`--input-ipc-server`, set automatically) for real pause/resume —
   `install battery-saver` works under this backend too, via
   `power_saver.py`'s systemd timer instead of a QML patch.
+- **`windows-mpv`** (Windows only, selected automatically) — static images
+  go through the plain Windows wallpaper API
+  (`SystemParametersInfoW`/`SPI_SETDESKWALLPAPER`); animated wallpapers
+  render through a bundled `mpv.exe` positioned behind the desktop icons
+  (the same WorkerW technique Wallpaper Engine/Lively Wallpaper use — see
+  [Windows](#windows)). Like `mpvpaper`, no theming, no thumbnail cache, and
+  no restart/boot-fix concept — but `supports_pause`/`supports_resume` are
+  both true, so battery saver works here too, driven by
+  `power_saver.py` + Windows Task Scheduler instead of a systemd timer.
 
 Adding a third backend (swww, hyprpaper, swaybg, ...) means writing one
 `WallpaperBackend` implementation in `backends/` — no changes anywhere else.

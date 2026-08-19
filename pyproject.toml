@@ -1,7 +1,7 @@
 [project]
 name = "livewall"
 version = "1.0.0"
-description = "Live wallpaper manager for Hyprland + Caelestia"
+description = "Live wallpaper manager for Hyprland + Caelestia (Linux) and Windows"
 readme = "README.md"
 authors = [
     { name = "HChaffin", email = "harrisonchaffin@gmail.com" }
@@ -9,14 +9,22 @@ authors = [
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 dependencies = [
-    "textual>=0.60",
-    "textual-image>=0.13.2",
+    "textual>=0.60; sys_platform != 'win32'",
+    "textual-image>=0.13.2; sys_platform != 'win32'",
+    "pyside6>=6.5; sys_platform == 'win32'",
+    "pywin32>=306; sys_platform == 'win32'",
+    "winshell>=0.6; sys_platform == 'win32'",
 ]
 
 [project.scripts]
 livewall = "livewall.cli:main"
 livewall-gui = "livewall.gui:run"
 livewall-picker = "livewall.picker:run"
+livewall-windows-gui = "livewall.gui_qt.app:run"
+
+[dependency-groups]
+# Build-time only — not something an end user installing LiveWall needs.
+windows-build = ["pyinstaller>=6.0; sys_platform == 'win32'"]
 
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]

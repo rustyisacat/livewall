@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 
 from livewall.backends.base import WallpaperBackend
@@ -31,10 +32,19 @@ POWER_SUPPLY_DIR = Path("/sys/class/power_supply")
 
 
 def _read_battery_percent() -> int | None:
+    """None on a desktop with no battery at all — callers treat that as
+    "nothing to do," not an error, per the project's hardware-awareness
+    requirement (same behavior on a laptop and a future desktop)."""
+    if sys.platform == "win32":
+        from livewall.windows.power import read_battery_percent
+
+        return read_battery_percent()
+    return _read_battery_percent_linux()
+
+
+def _read_battery_percent_linux() -> int | None:
     """The first device under /sys/class/power_supply reporting type
-    "Battery", or None on a desktop with no battery at all — callers treat
-    that as "nothing to do," not an error, per the project's hardware-
-    awareness requirement (same behavior on a laptop and a future desktop)."""
+    "Battery"."""
     if not POWER_SUPPLY_DIR.is_dir():
         return None
     for device in sorted(POWER_SUPPLY_DIR.iterdir()):

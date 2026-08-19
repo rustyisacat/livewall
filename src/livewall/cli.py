@@ -302,6 +302,15 @@ def cmd_preview(args: argparse.Namespace, lib: Library) -> int:
 
 
 def cmd_picker(args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        from livewall.gui_qt.quick_picker import QuickPicker
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication(sys.argv)
+        picker = QuickPicker()
+        picker.show()
+        return app.exec()
+
     from livewall.picker import run as run_picker
 
     run_picker()
@@ -309,6 +318,12 @@ def cmd_picker(args: argparse.Namespace) -> int:
 
 
 def cmd_gui(args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        from livewall.gui_qt.app import run as run_gui_qt
+
+        run_gui_qt()
+        return 0
+
     from livewall.gui import run as run_gui
 
     run_gui()

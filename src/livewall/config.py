@@ -4,15 +4,30 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-CONFIG_DIR = Path.home() / ".config" / "livewall"
-DATA_DIR = Path.home() / ".local" / "share" / "livewall"
-CACHE_DIR = Path.home() / ".cache" / "livewall"
+if sys.platform == "win32":
+    # %APPDATA% (roaming) for config/data, %LOCALAPPDATA% for anything
+    # machine-local and disposable (cache/thumbnails) — mirrors the
+    # roaming-vs-local convention Windows apps are expected to follow.
+    # Both are always set for a real user session; Path.home() is only a
+    # fallback for the unusual case where they're missing.
+    _appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    _localappdata = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    CONFIG_DIR = _appdata / "LiveWall"
+    DATA_DIR = _appdata / "LiveWall"
+    CACHE_DIR = _localappdata / "LiveWall" / "cache"
+else:
+    CONFIG_DIR = Path.home() / ".config" / "livewall"
+    DATA_DIR = Path.home() / ".local" / "share" / "livewall"
+    CACHE_DIR = Path.home() / ".cache" / "livewall"
+
 THUMBNAIL_DIR = CACHE_DIR / "thumbnails"
 
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -51,7 +66,7 @@ class Config:
     no_smart_colours: bool = False
     battery_saver_low: int = 15
     battery_saver_high: int = 25
-    backend: str = "caelestia-aw"
+    backend: str = field(default_factory=lambda: "windows-mpv" if sys.platform == "win32" else "caelestia-aw")
 
     @classmethod
     def load(cls) -> "Config":

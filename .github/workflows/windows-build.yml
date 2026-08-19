@@ -1,0 +1,65 @@
+name: Windows build
+
+# Must run on a real Windows runner — PyInstaller does not cross-compile,
+# so this can't be produced from the Linux machine this project is
+# developed on. Triggered manually or on a release tag; uploads the built
+# LiveWall.exe (as a zipped onedir folder) as a workflow artifact, and
+# attaches it to the release when triggered by one.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # pyproject.toml's Windows-only deps (PySide6, pywin32, winshell)
+        # are gated by sys_platform == 'win32' markers, not an extras group —
+        # `uv sync` resolves them automatically since this runner IS win32.
+        # --group windows-build additionally pulls in PyInstaller itself
+        # (a build tool, not something LiveWall depends on at runtime).
+        run: uv sync --group windows-build
+
+      - name: Fetch mpv.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path packaging/windows/vendor | Out-Null
+          $url = "https://sourceforge.net/projects/mpv-player-windows/files/latest/download"
+          Invoke-WebRequest -Uri $url -OutFile mpv-build.7z
+          7z x mpv-build.7z -ompv-extracted
+          Copy-Item mpv-extracted/mpv.exe packaging/windows/vendor/mpv.exe
+          # Ship mpv's own license alongside it — standard practice when
+          # bundling a third-party GPL/LGPL binary (see backends/windows_mpv.py's
+          # docstring for why this doesn't create a licensing conflict with
+          # LiveWall's own AGPL-3.0-or-later: subprocess+IPC, not linking).
+          if (Test-Path mpv-extracted/README.txt) {
+            Copy-Item mpv-extracted/README.txt packaging/windows/vendor/mpv-LICENSE.txt
+          }
+
+      - name: Build with PyInstaller
+        run: uv run pyinstaller packaging/windows/livewall.spec --noconfirm
+
+      - name: Zip the build
+        shell: pwsh
+        run: Compress-Archive -Path dist/LiveWall/* -DestinationPath LiveWall-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveWall-windows
+          path: LiveWall-windows.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LiveWall-windows.zip
