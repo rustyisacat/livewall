@@ -43,6 +43,46 @@ def _icon_path() -> str | None:
     return str(ico) if ico.exists() else None
 
 
+_SINGLE_INSTANCE_MUTEX_NAME = "Global\\LiveWallSingleInstance"
+_ERROR_ALREADY_EXISTS = 183
+
+# Keeps the mutex handle alive for the process's lifetime — releasing/GC'ing
+# it early would let a second launch slip past the check below, same "must
+# stay referenced somewhere real" pattern as
+# _windows_wallpaper_host.py's _wndproc_ref.
+_single_instance_mutex = None
+
+
+def _already_running() -> bool:
+    """Real Windows bug, confirmed via a genuine test session: nothing
+    stopped multiple LiveWall.exe GUI instances from running concurrently.
+    Each one independently tried to register the same global hotkey (every
+    registration after the first silently fails) and raced to write
+    windows_mpv_state.json — which is how that file ended up pointing at
+    dead PIDs, one of them later recycled by an unrelated process.
+
+    A named mutex is the standard Windows single-instance guard: the first
+    process to call CreateMutexW with this name "owns" it; every later
+    caller gets a valid (but redundant) handle back, and GetLastError()
+    reports ERROR_ALREADY_EXISTS right after the call — that's how "someone
+    else is already running" is detected, no other IPC needed."""
+    import ctypes
+
+    global _single_instance_mutex
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.GetLastError.argtypes = []
+    kernel32.GetLastError.restype = ctypes.c_ulong
+
+    handle = kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX_NAME)
+    if not handle:
+        return False  # couldn't even create it — fail open, don't block a real launch
+    _single_instance_mutex = handle
+    return kernel32.GetLastError() == _ERROR_ALREADY_EXISTS
+
+
 def _check_and_apply_update() -> None:
     """Best-effort self-update, run once at startup before anything else
     opens. Only ever does anything for a packaged build — see
@@ -87,6 +127,11 @@ def run() -> None:
         sys.exit(cli_main(sys.argv[1:]))
 
     setup_logging()
+
+    if _already_running():
+        logging.getLogger(__name__).info("Another LiveWall instance is already running — exiting")
+        return
+
     _check_and_apply_update()
 
     config = Config.load()

@@ -185,6 +185,8 @@ user32.SetProcessDPIAware.argtypes = []
 user32.SetProcessDPIAware.restype = wintypes.BOOL
 user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetClassNameW.restype = ctypes.c_int
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+user32.GetWindowRect.restype = wintypes.BOOL
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 kernel32.ExitProcess.argtypes = [wintypes.UINT]
@@ -278,7 +280,25 @@ def _class_name(hwnd: int) -> str:
     return buf.value
 
 
-def _find_target_workerw() -> int:
+def _is_plausible_desktop_window(hwnd: int, expected_width: int, expected_height: int) -> bool:
+    """Real Windows 11 finding from a genuine test session: repeated app
+    launches (before the gui_qt/app.py single-instance fix existed) can
+    leave behind tiny, disconnected "WorkerW"-classed ghost windows
+    (129x36 in one observed case) that strategy 2 below would otherwise
+    happily latch onto — a ghost satisfies "class is WorkerW, no
+    SHELLDLL_DefView child" just as well as a real one does. Rejects any
+    candidate under half the expected virtual-desktop size in either
+    dimension — generous enough to accept a real full-screen WorkerW
+    across DPI-scaling rounding, while trivially rejecting scraps like
+    that."""
+    rect = RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    width, height = rect.right - rect.left, rect.bottom - rect.top
+    return width >= expected_width * 0.5 and height >= expected_height * 0.5
+
+
+def _find_target_workerw(expected_width: int, expected_height: int) -> int:
     """Runs the Progman handshake and returns an HWND to reparent our own
     window into, positioned behind the desktop icons.
 
@@ -292,13 +312,28 @@ def _find_target_workerw() -> int:
     reproducible, not an intermittent timing race — some Windows 11
     configurations don't spawn a distinct empty WorkerW sibling for this
     at all. Falls back through two progressively less strict strategies,
-    printing which one succeeded (or every candidate it considered, if
-    none did) to stderr — this can't be reproduced without a Windows
-    machine, so the fallback logic here is a best-effort based on how
-    Wallpaper Engine/Lively Wallpaper style tools have documented handling
-    this exact Windows 11 difference, not something verified locally;
-    the stderr trail is what makes a *second* real failure actually
-    diagnosable instead of another guess.
+    each validated against expected_width/expected_height via
+    _is_plausible_desktop_window() before being trusted, printing which
+    one succeeded (or every candidate it considered, if none did) to
+    stderr — this can't be reproduced without a Windows machine, so the
+    fallback logic here is a best-effort based on how Wallpaper Engine/
+    Lively Wallpaper style tools have documented handling this exact
+    Windows 11 difference, not something verified locally; the stderr
+    trail is what makes a *second* real failure actually diagnosable
+    instead of another guess.
+
+    A second real finding from that same session, worth knowing before
+    trusting any of this too far: even a window that passes every check
+    here (correct Progman parentage, correct size, IsWindowVisible=True)
+    was confirmed to still not actually appear on screen on one affected
+    build — Explorer's desktop rendering has apparently moved to a
+    XAML/DWM-composited layer (window classes XamlExplorerHostIslandWindow
+    and WinUIDesktopWin32WindowClass were observed) that sits outside the
+    classic Progman/WorkerW tree entirely on that build. No amount of
+    window-discovery logic here can fix that — it isn't a bug in this
+    file, it's this whole decade-old technique (used by Wallpaper Engine,
+    Lively Wallpaper, RainWallpaper, etc. alike) no longer applying on
+    however Windows versions/configurations have made that same move.
     """
     progman = user32.FindWindowW("Progman", None)
     # Undocumented message that tells Progman to spawn a WorkerW behind the
@@ -328,14 +363,23 @@ def _find_target_workerw() -> int:
         return True
 
     user32.EnumWindows(_enum_for_sibling, 0)
-    if target.value:
+    if target.value and _is_plausible_desktop_window(target.value, expected_width, expected_height):
         print(f"DEBUG: WorkerW found via classic sibling search: {target.value}", file=sys.stderr, flush=True)
         return target.value
+    if target.value:
+        print(
+            f"DEBUG: classic sibling search found {target.value} but it's implausibly small "
+            "(likely a leftover ghost window) -- rejected",
+            file=sys.stderr, flush=True,
+        )
 
-    # Strategy 2: no distinct empty WorkerW sibling was found — look for
-    # ANY top-level WorkerW window that doesn't itself host SHELLDLL_DefView
-    # (there may be exactly one, spawned by the message above but not
-    # positioned where strategy 1 expects it).
+    # Strategy 2: no plausible WorkerW sibling was found — look for ANY
+    # top-level WorkerW window that doesn't itself host SHELLDLL_DefView and
+    # is a plausible full-screen size (there may be exactly one, spawned by
+    # the message above but not positioned where strategy 1 expects it; there
+    # may also be several tiny disconnected ghost WorkerW windows left behind
+    # by earlier launches — real Windows 11 finding — which the size check
+    # exists specifically to skip past).
     fallback = ctypes.c_void_p(0)
     seen_classes: list[str] = []
 
@@ -343,9 +387,13 @@ def _find_target_workerw() -> int:
     def _enum_for_empty_workerw(hwnd, _lparam):
         class_name = _class_name(hwnd)
         seen_classes.append(class_name)
-        if class_name == "WorkerW" and not user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None):
+        if (
+            class_name == "WorkerW"
+            and not user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None)
+            and _is_plausible_desktop_window(hwnd, expected_width, expected_height)
+        ):
             fallback.value = hwnd
-            return False  # stop at the first one
+            return False  # stop at the first plausible one
         return True
 
     user32.EnumWindows(_enum_for_empty_workerw, 0)
@@ -396,7 +444,7 @@ def main() -> None:
         print("ERROR: CreateWindowExW failed for the top-level window", file=sys.stderr, flush=True)
         sys.exit(1)
 
-    workerw = _find_target_workerw()
+    workerw = _find_target_workerw(width, height)
     if not workerw:
         print("ERROR: could not locate a WorkerW window behind the desktop icons", file=sys.stderr, flush=True)
         sys.exit(1)

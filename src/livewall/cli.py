@@ -892,7 +892,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _fix_console_encoding() -> None:
+    # Real Windows bug, confirmed via a genuine test session: `doctor`
+    # prints ✓/✗ (non-ASCII), and Windows' legacy per-console codepage
+    # (cp1252 by default, not UTF-8) can't encode them — sys.stdout.write()
+    # raised UnicodeEncodeError, which a frozen build surfaces as an
+    # "Unhandled exception in script" crash dialog for a CLI command that
+    # should have just printed a report. reconfigure() is a no-op (silently
+    # skipped) on any stream that doesn't support it, e.g. when stdout is
+    # redirected to a pipe rather than a real console.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _fix_console_encoding()
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging(args.verbose)

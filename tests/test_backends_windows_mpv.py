@@ -303,3 +303,46 @@ def test_health_check_reports_each_target(backend, tmp_path, monkeypatch):
     labels = {c[0] for c in checks}
     assert "current wallpaper (eDP-1)" in labels
     assert "current wallpaper (DP-2)" in labels
+
+
+# ---- mpv invocation regression ---------------------------------------
+#
+# Real bug found via a genuine Windows test session: this used to build
+# `["-o", "loop-file=inf no-audio load-scripts=no input-ipc-server=..."]`
+# — "-o" is mpv's real short form of --o=<file>, the ENCODE-to-file option,
+# so mpv silently went into encode mode targeting a garbage filename and
+# fatal-errored instead of ever rendering. "applied successfully" (mpv
+# spawned, _spawn_mpv() didn't raise) but nothing ever appeared on screen.
+
+
+class _FakeProc:
+    pid = 4242
+
+    def poll(self):
+        return None  # still running
+
+
+def test_spawn_mpv_never_uses_bare_dash_o_flag(backend, tmp_path, monkeypatch):
+    _stub_mpv_available(backend)
+    video = tmp_path / "a.mp4"
+    video.write_bytes(b"x")
+
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _FakeProc()
+
+    monkeypatch.setattr(windows_mpv.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(windows_mpv.time, "sleep", lambda _seconds: None)
+
+    backend._spawn_mpv("ALL", 12345, video)
+
+    cmd = captured["cmd"]
+    assert "-o" not in cmd, "must never pass mpv's real --o=<file> encode-mode flag"
+    assert "--wid=12345" in cmd
+    assert "--loop-file=inf" in cmd
+    assert "--no-audio" in cmd
+    assert "--load-scripts=no" in cmd
+    assert any(arg.startswith("--input-ipc-server=") for arg in cmd)
+    assert cmd[-1] == str(video)

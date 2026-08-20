@@ -67,6 +67,25 @@ def _delete(task_name: str) -> None:
     subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"], capture_output=True, timeout=10)
 
 
+def _create(args: list[str]) -> None:
+    """Runs a `schtasks /Create ...` command, raising with the command's
+    actual stdout/stderr on failure. Real bug, confirmed via a genuine test
+    session: every install_*() below used to call subprocess.run(check=True)
+    directly, which raises CalledProcessError — whose str() is just "Command
+    [...] returned non-zero exit status 1", dropping the one thing that
+    would actually explain *why* (schtasks.exe's own error text, on stderr).
+    Every caller in this project catches a broad `except Exception` and logs
+    str(exc), so fixing this here, once, fixes every call site's error
+    message at once."""
+    try:
+        subprocess.run(args, check=True, capture_output=True, text=True, timeout=15)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        raise RuntimeError(
+            f"{' '.join(args)} failed (exit {exc.returncode})" + (f": {detail}" if detail else "")
+        ) from exc
+
+
 def is_installed() -> bool:
     return _query(RANDOM_TASK_NAME)
 
@@ -75,13 +94,10 @@ def install(interval: RandomInterval) -> None:
     if interval == "off":
         raise ValueError("random_interval is 'off' — set an interval first")
     minutes = max(1, RANDOM_INTERVAL_SECONDS[interval] // 60)
-    subprocess.run(
-        [
-            "schtasks", "/Create", "/TN", RANDOM_TASK_NAME,
-            "/TR", f'"{_livewall_bin()}" random', "/SC", "MINUTE", "/MO", str(minutes), "/F",
-        ],
-        check=True, capture_output=True, text=True, timeout=15,
-    )
+    _create([
+        "schtasks", "/Create", "/TN", RANDOM_TASK_NAME,
+        "/TR", f'"{_livewall_bin()}" random', "/SC", "MINUTE", "/MO", str(minutes), "/F",
+    ])
     logger.info("Created scheduled task %r (every %sm)", RANDOM_TASK_NAME, minutes)
 
 
@@ -95,13 +111,10 @@ def is_sync_installed() -> bool:
 
 def install_sync(hours: float) -> None:
     minutes = max(1, int(hours * 60))
-    subprocess.run(
-        [
-            "schtasks", "/Create", "/TN", SYNC_TASK_NAME,
-            "/TR", f'"{_livewall_bin()}" sync', "/SC", "MINUTE", "/MO", str(minutes), "/F",
-        ],
-        check=True, capture_output=True, text=True, timeout=15,
-    )
+    _create([
+        "schtasks", "/Create", "/TN", SYNC_TASK_NAME,
+        "/TR", f'"{_livewall_bin()}" sync', "/SC", "MINUTE", "/MO", str(minutes), "/F",
+    ])
     logger.info("Created scheduled task %r (every %sm)", SYNC_TASK_NAME, minutes)
 
 
@@ -114,13 +127,10 @@ def is_restore_installed() -> bool:
 
 
 def install_restore_service() -> None:
-    subprocess.run(
-        [
-            "schtasks", "/Create", "/TN", RESTORE_TASK_NAME,
-            "/TR", f'"{_livewall_bin()}" restore', "/SC", "ONLOGON", "/DELAY", RESTORE_DELAY, "/F",
-        ],
-        check=True, capture_output=True, text=True, timeout=15,
-    )
+    _create([
+        "schtasks", "/Create", "/TN", RESTORE_TASK_NAME,
+        "/TR", f'"{_livewall_bin()}" restore', "/SC", "ONLOGON", "/DELAY", RESTORE_DELAY, "/F",
+    ])
     logger.info("Created scheduled task %r", RESTORE_TASK_NAME)
 
 
@@ -133,14 +143,11 @@ def is_power_saver_installed() -> bool:
 
 
 def install_power_saver() -> None:
-    subprocess.run(
-        [
-            "schtasks", "/Create", "/TN", POWER_SAVER_TASK_NAME,
-            "/TR", f'"{_livewall_bin()}" power-check', "/SC", "MINUTE",
-            "/MO", str(POWER_SAVER_INTERVAL_MINUTES), "/F",
-        ],
-        check=True, capture_output=True, text=True, timeout=15,
-    )
+    _create([
+        "schtasks", "/Create", "/TN", POWER_SAVER_TASK_NAME,
+        "/TR", f'"{_livewall_bin()}" power-check', "/SC", "MINUTE",
+        "/MO", str(POWER_SAVER_INTERVAL_MINUTES), "/F",
+    ])
     logger.info("Created scheduled task %r (every %sm)", POWER_SAVER_TASK_NAME, POWER_SAVER_INTERVAL_MINUTES)
 
 

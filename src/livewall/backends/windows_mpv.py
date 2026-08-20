@@ -58,7 +58,19 @@ _HOST_SCRIPT = Path(__file__).parent / "_windows_wallpaper_host.py"
 # gifs loop fine under mpv's own loop-file handling, same as the Linux backend.
 _LOOPING_EXTENSIONS = {".mp4", ".webm", ".mkv", ".gif"}
 _STATIC_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
-_MPV_OPTS_LOOPING = "loop-file=inf no-audio load-scripts=no"
+# Real, confirmed-on-actual-Windows-11 bug, found via a genuine test session:
+# these used to be joined into one space-separated string and passed as the
+# value of a single "-o" flag (`["-o", "loop-file=inf no-audio ..."]`). "-o"
+# is mpv's real short form of --o=<file>, the ENCODE-to-file option — mpv
+# was silently going into encode mode targeting a file named after that
+# whole garbage string, then fatal-erroring ("Encoding initialization
+# failed") instead of ever rendering anything. This is very likely the
+# actual reason wallpapers "applied successfully" (mpv did spawn, so
+# _spawn_mpv() never raised) but nothing ever appeared on screen, moreso
+# than the WorkerW-target-window question, which was the other live theory
+# at the time this was found — a broken mpv invocation would explain "no
+# visible change" regardless of whether the target window was correct.
+_MPV_OPTS_LOOPING = ["--loop-file=inf", "--no-audio", "--load-scripts=no"]
 
 _HOST_STARTUP_TIMEOUT_SECONDS = 5.0
 _MPV_STARTUP_CHECK_SECONDS = 0.4
@@ -343,15 +355,33 @@ class WindowsMpvBackend(WallpaperBackend):
         if not saw_done or ALL_TARGET not in hwnds:
             _terminate(proc.pid)
             raise BackendApplyError("wallpaper host did not finish reporting its windows in time")
+
+        # The host can "succeed" (report a window, never crash) while having
+        # fallen back to a strategy that real-Windows-11 testing found
+        # doesn't actually render anything visible — see
+        # _windows_wallpaper_host.py's module docstring. Its own stderr log
+        # already carries a DEBUG line saying which strategy fired; surface
+        # the risky one here too so it's visible without having to go dig up
+        # that log file after the fact.
+        if HOST_STDERR_LOG.exists():
+            host_log = HOST_STDERR_LOG.read_text(errors="replace")
+            if "falling back to Progman itself" in host_log:
+                logger.warning(
+                    "The wallpaper host couldn't find a proper WorkerW window and fell back to "
+                    "Progman directly — this has been confirmed NOT to render on at least one real "
+                    "Windows 11 build. If the wallpaper doesn't appear, this is very likely why."
+                )
         return proc.pid, hwnds
 
     # ---- apply -----------------------------------------------------------
 
     def _spawn_mpv(self, target: str, hwnd: int, path: Path) -> int:
         mpv = self._mpv_path()
-        opts = f"{_MPV_OPTS_LOOPING} input-ipc-server={_ipc_pipe(target)}"
-        cmd = [mpv, f"--wid={hwnd}", "-o", opts, str(path)]
-        logger.info("Applying via mpv (%s): %s", target, " ".join(cmd))
+        cmd = [
+            mpv, f"--wid={hwnd}", *_MPV_OPTS_LOOPING,
+            f"--input-ipc-server={_ipc_pipe(target)}", str(path),
+        ]
+        logger.info("Applying via mpv (%s): %r", target, cmd)
 
         stderr_log = _mpv_stderr_log(target)
         stderr_log.parent.mkdir(parents=True, exist_ok=True)
