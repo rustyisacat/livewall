@@ -54,7 +54,7 @@ _HTTP_TIMEOUT_SECONDS = 15
 # told to) — kept in sync with pyproject.toml's version by hand at each
 # release, same as every other "no build-time templating step exists for
 # this yet" spot in the Windows side of this project.
-_FALLBACK_VERSION = "1.3.5"
+_FALLBACK_VERSION = "1.0.0"
 
 
 def _current_version() -> str:
