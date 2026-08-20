@@ -45,6 +45,23 @@ particularly untested — a real ctypes mistake already slipped through once
 in this same GUI (gui_qt/tray.py, fixed after the first real-hardware run),
 so treat this file's correctness with real skepticism until it's actually
 been run on Windows.
+
+A second real ctypes mistake was caught the same way (a crash screenshot
+from an actual Windows run): every windll call here was missing explicit
+.argtypes/.restype declarations. Without them, ctypes has to guess how to
+marshal each argument/return value — for a plain Python int with no
+declared type, it guesses a 32-bit C `int`/`long`, which is wrong for
+WPARAM/LPARAM (which are pointer-sized — 64-bit on x64 Windows) and for
+every HWND/HMODULE/pointer return value. This mostly went unnoticed
+because handle values are usually small enough to fit, but _wndproc's
+DefWindowProcW call crashed for real the moment a genuine wide LPARAM
+value came through: `ctypes.ArgumentError: argument 4: OverflowError:
+int too long to convert`. ctypes.wintypes.WPARAM/LPARAM themselves are
+ALSO too narrow for this (defined as plain c_ulong/c_long, which are only
+32-bit under Windows' LLP64 model) — the explicit c_size_t/c_ssize_t
+aliases below are the actually-correct pointer-width types, used both in
+the WNDPROC/MONITORENUMPROC callback signatures and in every argtypes/
+restype declaration that touches a WPARAM, LPARAM, or LRESULT.
 """
 
 from __future__ import annotations
@@ -68,9 +85,14 @@ SMTO_NORMAL = 0x0000
 GWL_STYLE = -16
 ALL_TARGET = "ALL"
 
-WNDPROC = ctypes.WINFUNCTYPE(
-    ctypes.c_long, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
-)
+# Pointer-width-correct WPARAM/LPARAM/LRESULT — see the module docstring's
+# second note. Used everywhere instead of ctypes.wintypes.WPARAM/LPARAM.
+WPARAM = ctypes.c_size_t
+LPARAM = ctypes.c_ssize_t
+LRESULT = ctypes.c_ssize_t
+
+WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, WPARAM, LPARAM)
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, LPARAM)
 
 
 class WNDCLASS(ctypes.Structure):
@@ -107,6 +129,66 @@ class MONITORINFOEXW(ctypes.Structure):
     ]
 
 
+MONITORENUMPROC = ctypes.WINFUNCTYPE(
+    wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(RECT), LPARAM
+)
+
+# Explicit argtypes/restype for every windll function called below — see
+# the module docstring's second note for why this matters (it's the fix
+# for a real crash, not just tidiness). HWND/HMODULE/HMENU/HANDLE-typed
+# values are already pointer-width via ctypes.wintypes, so only the
+# WPARAM/LPARAM/LRESULT/LONG_PTR spots below use the explicit aliases
+# from above instead.
+user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowW.restype = wintypes.HWND
+user32.SendMessageTimeoutW.argtypes = [
+    wintypes.HWND, wintypes.UINT, WPARAM, LPARAM, wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t),
+]
+user32.SendMessageTimeoutW.restype = LRESULT
+user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowExW.restype = wintypes.HWND
+user32.EnumWindows.argtypes = [WNDENUMPROC, LPARAM]
+user32.EnumWindows.restype = wintypes.BOOL
+user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFOEXW)]
+user32.GetMonitorInfoW.restype = wintypes.BOOL
+user32.EnumDisplayMonitors.argtypes = [wintypes.HDC, ctypes.c_void_p, MONITORENUMPROC, LPARAM]
+user32.EnumDisplayMonitors.restype = wintypes.BOOL
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASS)]
+user32.RegisterClassW.restype = wintypes.ATOM
+user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, ctypes.c_void_p,
+]
+user32.CreateWindowExW.restype = wintypes.HWND
+user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
+user32.SetParent.restype = wintypes.HWND
+user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.ShowWindow.restype = wintypes.BOOL
+user32.MoveWindow.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.BOOL]
+user32.MoveWindow.restype = wintypes.BOOL
+user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+user32.GetMessageW.restype = wintypes.BOOL
+user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.TranslateMessage.restype = wintypes.BOOL
+user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+user32.DispatchMessageW.restype = LRESULT
+user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
+user32.DefWindowProcW.restype = LRESULT
+user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+user32.SetProcessDpiAwarenessContext.restype = wintypes.BOOL
+user32.SetProcessDPIAware.argtypes = []
+user32.SetProcessDPIAware.restype = wintypes.BOOL
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+kernel32.ExitProcess.argtypes = [wintypes.UINT]
+kernel32.ExitProcess.restype = None
+
+
 # Keeps the ctypes WNDPROC callback object alive for the process's
 # lifetime — it would otherwise be garbage-collected once
 # _register_window_class() returns, and Windows calling into a dangling
@@ -136,7 +218,10 @@ def _set_dpi_aware() -> None:
         pass
     try:
         # PROCESS_PER_MONITOR_DPI_AWARE == 2
-        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:  # S_OK
+        shcore = ctypes.windll.shcore
+        shcore.SetProcessDpiAwareness.argtypes = [ctypes.c_int]
+        shcore.SetProcessDpiAwareness.restype = ctypes.c_long  # HRESULT
+        if shcore.SetProcessDpiAwareness(2) == 0:  # S_OK
             return
     except (AttributeError, OSError):
         pass
@@ -151,18 +236,14 @@ def _enumerate_monitors() -> list[tuple[str, RECT]]:
     EnumDisplayMonitors happens to enumerate them."""
     monitors: list[tuple[str, RECT]] = []
 
-    monitorenumproc = ctypes.WINFUNCTYPE(
-        wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(RECT), wintypes.LPARAM
-    )
-
-    def _callback(hmonitor, _hdc, rect_ptr, _lparam):
+    def _callback(hmonitor, _hdc, _rect_ptr, _lparam):
         info = MONITORINFOEXW()
         info.cbSize = ctypes.sizeof(MONITORINFOEXW)
         if user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
             monitors.append((info.szDevice, info.rcMonitor))
         return True
 
-    user32.EnumDisplayMonitors(None, None, monitorenumproc(_callback), 0)
+    user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(_callback), 0)
     return monitors
 
 
@@ -197,13 +278,17 @@ def _find_target_workerw() -> int:
     # Undocumented message that tells Progman to spawn a WorkerW behind the
     # icons. No-ops harmlessly if one already exists. Sent via
     # SendMessageTimeoutW (not plain SendMessageW) so a slow/unresponsive
-    # Progman can't hang this process indefinitely.
-    result = wintypes.DWORD()
+    # Progman can't hang this process indefinitely. The result out-param is
+    # DWORD_PTR (pointer-sized), not DWORD — a plain wintypes.DWORD() buffer
+    # here would be 4 bytes too small on x64 and risk a stack overwrite;
+    # unused either way (only the call's own return value matters), but
+    # sized correctly regardless.
+    result = ctypes.c_size_t()
     user32.SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, ctypes.byref(result))
 
     target = ctypes.c_void_p(0)
 
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    @WNDENUMPROC
     def _enum_windows(hwnd, _lparam):
         def_view = user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None)
         if def_view:

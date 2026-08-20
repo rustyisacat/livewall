@@ -40,6 +40,7 @@ import signal
 import subprocess
 import sys
 import time
+from ctypes import wintypes
 from pathlib import Path
 from typing import ClassVar
 
@@ -96,6 +97,16 @@ def _pid_alive(pid: int) -> bool:
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     STILL_ACTIVE = 259
     kernel32 = ctypes.windll.kernel32
+    # HANDLE is pointer-width; without an explicit restype ctypes defaults
+    # to a 32-bit int and would truncate the returned handle on x64 — see
+    # _windows_wallpaper_host.py's module docstring for the real crash this
+    # exact class of missing-argtypes mistake caused elsewhere.
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         return False
@@ -448,9 +459,10 @@ class WindowsMpvBackend(WallpaperBackend):
     def _set_static(self, path: Path) -> None:
         if path.suffix.lower() not in _STATIC_EXTENSIONS:
             raise BackendApplyError(f"Unsupported static image format: {path.suffix}")
-        ok = ctypes.windll.user32.SystemParametersInfoW(
-            _SPI_SETDESKWALLPAPER, 0, str(path), _SPIF_UPDATE_AND_SEND
-        )
+        user32 = ctypes.windll.user32
+        user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, wintypes.LPCWSTR, wintypes.UINT]
+        user32.SystemParametersInfoW.restype = wintypes.BOOL
+        ok = user32.SystemParametersInfoW(_SPI_SETDESKWALLPAPER, 0, str(path), _SPIF_UPDATE_AND_SEND)
         if not ok:
             raise BackendApplyError("SystemParametersInfoW failed to set the wallpaper")
         state = self._read_state()

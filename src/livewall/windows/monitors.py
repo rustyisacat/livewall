@@ -52,8 +52,16 @@ def list_monitors() -> list[str]:
     user32 = ctypes.windll.user32
     names: list[str] = []
 
+    # LPARAM is pointer-sized (64-bit on x64 Windows) — ctypes.wintypes.LPARAM
+    # is a legacy c_long (32-bit) alias, too narrow for real use. Not passed
+    # a meaningful value here (dwData is always 0), but declared correctly
+    # anyway since a mismatched callback signature is undefined behavior
+    # regardless of whether the value in question happens to be small. See
+    # backends/_windows_wallpaper_host.py's module docstring for the real
+    # crash this exact class of mistake caused elsewhere in this codebase.
+    lparam_t = ctypes.c_ssize_t
     monitorenumproc = ctypes.WINFUNCTYPE(
-        wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(_RECT), wintypes.LPARAM
+        wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(_RECT), lparam_t
     )
 
     def _callback(hmonitor, _hdc, _rect_ptr, _lparam):
@@ -62,6 +70,11 @@ def list_monitors() -> list[str]:
         if user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
             names.append(info.szDevice)
         return True
+
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFOEXW)]
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+    user32.EnumDisplayMonitors.argtypes = [wintypes.HDC, ctypes.c_void_p, monitorenumproc, lparam_t]
+    user32.EnumDisplayMonitors.restype = wintypes.BOOL
 
     try:
         user32.EnumDisplayMonitors(None, None, monitorenumproc(_callback), 0)
