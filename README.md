@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Textual](https://img.shields.io/badge/UI-Textual-6C4FD6)
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/github/v/release/rustyisacat/livewall?label=version)
 ![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)
 
 ![LiveWall demo — browsing the library, then applying a wallpaper via the quick picker](docs/demo.gif)
