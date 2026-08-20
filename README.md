@@ -390,32 +390,43 @@ re-download, and shows a small "LiveWall was updated!" banner (in either
 GUI) the next time it launches after doing so — click "What's new?" for
 the changelog.
 
+Unlike every other automation in this README, this one is **on by
+default** rather than opt-in — enabled silently the very first time
+LiveWall ever runs (see `bootstrap.py`), on the theory that a wallpaper
+manager which never checks for its own updates defeats half the point of
+shipping continuous fixes. It only ever does this once: uninstalling it
+afterward (see below) sticks and is never silently re-enabled.
+
 **Linux** runs directly from this git checkout, so an "update" here is
 just a `git fetch` + fast-forward `git pull` of that checkout, gated
 behind real safety rails since this is also the directory development
 happens in: it never touches anything if `git status` isn't clean, and
 never does anything other than a plain fast-forward (no merges, no
-rebases). Opt in with:
+rebases). First run installs `livewall-update.service`, a login-time
+systemd `--user` oneshot that runs `livewall update-check`; you can also
+install or remove it yourself:
 
 ```bash
 livewall install update-checker
+livewall uninstall update-checker
 ```
 
-This installs `livewall-update.service`, a login-time systemd `--user`
-oneshot (same shape as the other opt-in units below) that runs `livewall
-update-check`. Uninstall with `livewall uninstall update-checker`;
 `livewall doctor` reports whether it's installed.
 
 **Windows** checks GitHub's latest release against the running build's
-version at every launch (no opt-in — there's no separate scheduled task
-for this, since one would race with the existing login-autostart entry;
-see the Windows section above for why a second Task Scheduler entry
-around login is a bad idea here). If there's a newer release, it
-downloads and stages the zip, then hands off to a small batch-file helper
-that waits for LiveWall to exit, swaps the install directory (backing up
-the previous one to `...LiveWall.backup` rather than deleting it), and
-relaunches automatically. ⚠️ Unverified beyond the download/stage step —
-same caveat as the rest of [Windows](#windows) support.
+version at every launch. There's no separate scheduled task for this
+(one would race with the existing login-autostart entry; see the Windows
+section above for why a second Task Scheduler entry around login is a
+bad idea here) — instead, first run enables the existing run-at-login
+autostart entry, the same one the Settings dialog's "Run at login"
+checkbox controls, so the check actually happens unattended instead of
+only when you remember to open LiveWall yourself. If there's a newer
+release, it downloads and stages the zip, then hands off to a small
+batch-file helper that waits for LiveWall to exit, swaps the install
+directory (backing up the previous one to `...LiveWall.backup` rather
+than deleting it), and relaunches automatically. ⚠️ Unverified beyond the
+download/stage step — same caveat as the rest of [Windows](#windows)
+support.
 
 ## Battery saver
 

@@ -16,6 +16,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from livewall import bootstrap
 from livewall.backends import BackendUnavailableError, get_backend
 from livewall.config import Config
 from livewall.gui_qt import theme
@@ -89,6 +90,7 @@ def run() -> None:
     _check_and_apply_update()
 
     config = Config.load()
+    bootstrap.ensure_first_run_setup(config)
     try:
         backend = get_backend(config.backend)
     except BackendUnavailableError as exc:

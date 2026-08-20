@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from livewall import rotation
+from livewall import bootstrap, rotation
 from livewall.backends import BackendApplyError, BackendUnavailableError, WallpaperBackend, get_backend
 from livewall.backends.caelestia_aw import CaelestiaAwBackend
 from livewall.config import Config
@@ -896,6 +896,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging(args.verbose)
+
+    bootstrap.ensure_first_run_setup(Config.load())
 
     # picker/gui construct their own backend internally (non-fatally, in
     # picker's case — a bad config must never stop the Super+Shift+B window

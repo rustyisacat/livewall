@@ -72,6 +72,11 @@ class Config:
     battery_saver_low: int = 15
     battery_saver_high: int = 25
     backend: str = field(default_factory=lambda: "windows-mpv" if sys.platform == "win32" else "caelestia-aw")
+    # Guards bootstrap.ensure_first_run_setup() — flips True the first time
+    # LiveWall ever runs and stays True forever after, so a later explicit
+    # `livewall uninstall update-checker` (or disabling autostart on
+    # Windows) sticks instead of being silently re-enabled next launch.
+    did_first_run_setup: bool = False
 
     @classmethod
     def load(cls) -> "Config":
