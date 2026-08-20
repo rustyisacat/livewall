@@ -183,6 +183,8 @@ user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
 user32.SetProcessDpiAwarenessContext.restype = wintypes.BOOL
 user32.SetProcessDPIAware.argtypes = []
 user32.SetProcessDPIAware.restype = wintypes.BOOL
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClassNameW.restype = ctypes.c_int
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 kernel32.ExitProcess.argtypes = [wintypes.UINT]
@@ -270,10 +272,34 @@ def _register_window_class(name: str) -> None:
     user32.RegisterClassW(ctypes.byref(wc))
 
 
+def _class_name(hwnd: int) -> str:
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buf, 256)
+    return buf.value
+
+
 def _find_target_workerw() -> int:
-    """Runs the Progman handshake and returns the WorkerW HWND that sits
-    directly behind the desktop icons (the empty one — not the one hosting
-    SHELLDLL_DefView, which owns the icons themselves)."""
+    """Runs the Progman handshake and returns an HWND to reparent our own
+    window into, positioned behind the desktop icons.
+
+    The classic technique (what Wallpaper Engine/Lively Wallpaper use on
+    Windows 10): ask Progman to spawn an empty WorkerW via an undocumented
+    message, then find it as the WorkerW sibling immediately after
+    whichever top-level window hosts SHELLDLL_DefView (the icon view).
+
+    Confirmed via a real Windows 11 report that this classic search alone
+    isn't enough there — "could not locate a WorkerW window", 100%
+    reproducible, not an intermittent timing race — some Windows 11
+    configurations don't spawn a distinct empty WorkerW sibling for this
+    at all. Falls back through two progressively less strict strategies,
+    printing which one succeeded (or every candidate it considered, if
+    none did) to stderr — this can't be reproduced without a Windows
+    machine, so the fallback logic here is a best-effort based on how
+    Wallpaper Engine/Lively Wallpaper style tools have documented handling
+    this exact Windows 11 difference, not something verified locally;
+    the stderr trail is what makes a *second* real failure actually
+    diagnosable instead of another guess.
+    """
     progman = user32.FindWindowW("Progman", None)
     # Undocumented message that tells Progman to spawn a WorkerW behind the
     # icons. No-ops harmlessly if one already exists. Sent via
@@ -286,21 +312,66 @@ def _find_target_workerw() -> int:
     result = ctypes.c_size_t()
     user32.SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, ctypes.byref(result))
 
+    # Strategy 1 (classic): the WorkerW sibling immediately after whichever
+    # top-level window hosts SHELLDLL_DefView.
     target = ctypes.c_void_p(0)
+    host_of_defview = ctypes.c_void_p(0)
 
     @WNDENUMPROC
-    def _enum_windows(hwnd, _lparam):
+    def _enum_for_sibling(hwnd, _lparam):
         def_view = user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None)
         if def_view:
-            # The WorkerW we actually want is the *next* sibling after the
-            # one hosting SHELLDLL_DefView — the empty one behind it.
+            host_of_defview.value = hwnd
             candidate = user32.FindWindowExW(None, hwnd, "WorkerW", None)
             if candidate:
                 target.value = candidate
         return True
 
-    user32.EnumWindows(_enum_windows, 0)
-    return target.value or 0
+    user32.EnumWindows(_enum_for_sibling, 0)
+    if target.value:
+        print(f"DEBUG: WorkerW found via classic sibling search: {target.value}", file=sys.stderr, flush=True)
+        return target.value
+
+    # Strategy 2: no distinct empty WorkerW sibling was found — look for
+    # ANY top-level WorkerW window that doesn't itself host SHELLDLL_DefView
+    # (there may be exactly one, spawned by the message above but not
+    # positioned where strategy 1 expects it).
+    fallback = ctypes.c_void_p(0)
+    seen_classes: list[str] = []
+
+    @WNDENUMPROC
+    def _enum_for_empty_workerw(hwnd, _lparam):
+        class_name = _class_name(hwnd)
+        seen_classes.append(class_name)
+        if class_name == "WorkerW" and not user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None):
+            fallback.value = hwnd
+            return False  # stop at the first one
+        return True
+
+    user32.EnumWindows(_enum_for_empty_workerw, 0)
+    if fallback.value:
+        print(f"DEBUG: WorkerW found via empty-WorkerW fallback: {fallback.value}", file=sys.stderr, flush=True)
+        return fallback.value
+
+    # Strategy 3 (last resort): reparent directly into Progman. Not the
+    # dedicated empty layer the classic technique targets, but Progman
+    # always exists, and several Windows 11 configurations render content
+    # parented here behind the icons correctly anyway.
+    if host_of_defview.value:
+        print(
+            f"DEBUG: no WorkerW found at all (SHELLDLL_DefView hosted directly by "
+            f"hwnd={host_of_defview.value}, class={_class_name(host_of_defview.value)}) "
+            "-- falling back to Progman itself",
+            file=sys.stderr, flush=True,
+        )
+        return progman
+
+    print(
+        f"DEBUG: SHELLDLL_DefView not found under any top-level window -- "
+        f"top-level classes seen: {seen_classes}",
+        file=sys.stderr, flush=True,
+    )
+    return 0
 
 
 def main() -> None:
