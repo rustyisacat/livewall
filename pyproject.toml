@@ -1,6 +1,6 @@
 [project]
 name = "livewall"
-version = "1.3.3"
+version = "1.3.4"
 description = "Live wallpaper manager for Hyprland + Caelestia (Linux) and Windows"
 readme = "README.md"
 authors = [
