@@ -99,3 +99,33 @@ def test_windows_skips_if_autostart_already_on(redirect_paths, monkeypatch):
 
     assert calls == []
     assert config.did_first_run_setup is True
+
+
+def test_windows_first_run_adds_to_path(redirect_paths, monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    from livewall.windows import pathenv, startup
+
+    monkeypatch.setattr(startup, "is_autostart_installed", lambda: True)  # not under test here
+    monkeypatch.setattr(pathenv, "is_on_path", lambda: False)
+    calls = []
+    monkeypatch.setattr(pathenv, "add_to_path", lambda: calls.append(1))
+
+    config = Config()
+    bootstrap.ensure_first_run_setup(config)
+
+    assert calls == [1]
+
+
+def test_windows_skips_path_when_already_on_it(redirect_paths, monkeypatch):
+    monkeypatch.setattr("sys.platform", "win32")
+    from livewall.windows import pathenv, startup
+
+    monkeypatch.setattr(startup, "is_autostart_installed", lambda: True)
+    monkeypatch.setattr(pathenv, "is_on_path", lambda: True)
+    calls = []
+    monkeypatch.setattr(pathenv, "add_to_path", lambda: calls.append(1))
+
+    config = Config()
+    bootstrap.ensure_first_run_setup(config)
+
+    assert calls == []

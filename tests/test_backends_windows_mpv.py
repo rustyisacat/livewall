@@ -344,5 +344,7 @@ def test_spawn_mpv_never_uses_bare_dash_o_flag(backend, tmp_path, monkeypatch):
     assert "--loop-file=inf" in cmd
     assert "--no-audio" in cmd
     assert "--load-scripts=no" in cmd
+    assert "--panscan=1.0" in cmd  # fill the screen instead of letterboxing
+    assert "--profile=gpu-hq" in cmd  # higher-quality upscaling than plain bilinear
     assert any(arg.startswith("--input-ipc-server=") for arg in cmd)
     assert cmd[-1] == str(video)

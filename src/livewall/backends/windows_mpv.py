@@ -70,7 +70,20 @@ _STATIC_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp"}
 # than the WorkerW-target-window question, which was the other live theory
 # at the time this was found — a broken mpv invocation would explain "no
 # visible change" regardless of whether the target window was correct.
-_MPV_OPTS_LOOPING = ["--loop-file=inf", "--no-audio", "--load-scripts=no"]
+_MPV_OPTS_LOOPING = [
+    "--loop-file=inf", "--no-audio", "--load-scripts=no",
+    # --panscan=1.0: fill the screen by cropping instead of mpv's default
+    # letterbox/pillarbox when the source video's aspect ratio doesn't
+    # exactly match the display's — confirmed via a real Windows 11 test
+    # session as the cause of a black bar across the top of an otherwise-
+    # working wallpaper (the matching bottom bar was hidden behind the
+    # taskbar, which is why only the top one was visible).
+    # --profile=gpu-hq: mpv's own bundle of higher-quality scalers
+    # (ewa_lanczossharp-class upscaling instead of plain bilinear) —
+    # requested after the same session reported low-resolution source
+    # videos looking "crunchy" once stretched to fill a real display.
+    "--panscan=1.0", "--profile=gpu-hq",
+]
 
 _HOST_STARTUP_TIMEOUT_SECONDS = 5.0
 _MPV_STARTUP_CHECK_SECONDS = 0.4

@@ -51,8 +51,16 @@ _LOOPING_EXTENSIONS = {".mp4", ".webm", ".mkv", ".gif"}
 # stop the directory auto-load scan that actually loads mpris.so, so it's
 # not enough on its own. The user's real mpv usage elsewhere is a separate
 # process and unaffected.
-_MPV_OPTS_LOOPING = "loop-file=inf no-audio load-scripts=no"
-_MPV_OPTS_STATIC = "image-display-duration=inf no-audio load-scripts=no"
+# panscan=1.0: fill the screen by cropping instead of mpv's default
+# letterbox/pillarbox behavior when the source's aspect ratio doesn't
+# exactly match the display's — a black bar is the alternative, which is
+# never what a wallpaper should show. profile=gpu-hq: mpv's own built-in
+# bundle of higher-quality scalers (ewa_lanczossharp-class upscaling
+# instead of plain bilinear) — the difference is very visible on anything
+# lower-resolution than the display it's stretched to, which is common
+# for wallpaper-sized source video.
+_MPV_OPTS_LOOPING = "loop-file=inf no-audio load-scripts=no panscan=1.0 profile=gpu-hq"
+_MPV_OPTS_STATIC = "image-display-duration=inf no-audio load-scripts=no panscan=1.0 profile=gpu-hq"
 
 _STARTUP_CHECK_SECONDS = 0.4
 _STOP_GRACE_SECONDS = 1.0

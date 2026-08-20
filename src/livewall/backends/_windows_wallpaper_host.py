@@ -84,6 +84,10 @@ SW_SHOW = 5
 SMTO_NORMAL = 0x0000
 GWL_STYLE = -16
 ALL_TARGET = "ALL"
+HWND_BOTTOM = 1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
 
 # Pointer-width-correct WPARAM/LPARAM/LRESULT — see the module docstring's
 # second note. Used everywhere instead of ctypes.wintypes.WPARAM/LPARAM.
@@ -187,6 +191,10 @@ user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 user32.GetClassNameW.restype = ctypes.c_int
 user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
 user32.GetWindowRect.restype = wintypes.BOOL
+user32.SetWindowPos.argtypes = [
+    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT,
+]
+user32.SetWindowPos.restype = wintypes.BOOL
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 kernel32.ExitProcess.argtypes = [wintypes.UINT]
@@ -450,6 +458,15 @@ def main() -> None:
         sys.exit(1)
 
     user32.SetParent(top_level, workerw)
+    # Explicitly push to the bottom of the z-order within its new parent —
+    # SetParent alone doesn't guarantee that, and a window inserted above
+    # its siblings there would render over the desktop icons instead of
+    # behind them. Real gap found via a genuine Windows 11 test session
+    # (rendering finally worked after the mpv-invocation fix, but desktop
+    # icons weren't showing through) — every real implementation of this
+    # trick (e.g. Lively Wallpaper's C# code) does this explicitly; it was
+    # simply missing here.
+    user32.SetWindowPos(top_level, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
     # Strip any remaining caption/border bits and show it filling the parent.
     style = user32.GetWindowLongPtrW(top_level, GWL_STYLE)
     user32.SetWindowLongPtrW(top_level, GWL_STYLE, style | WS_VISIBLE)

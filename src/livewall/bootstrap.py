@@ -30,6 +30,7 @@ def ensure_first_run_setup(config: Config) -> None:
 
     if sys.platform == "win32":
         _enable_windows_autostart()
+        _add_windows_to_path()
     else:
         _enable_linux_update_checker()
 
@@ -62,3 +63,17 @@ def _enable_windows_autostart() -> None:
             logger.info("First run: enabled run-at-login")
     except Exception as exc:
         logger.warning("First-run autostart setup failed (non-fatal): %s", exc)
+
+
+def _add_windows_to_path() -> None:
+    # Requested directly: a portable extracted-anywhere .exe isn't
+    # runnable by name from a terminal the way Linux's console-script
+    # entry point is the moment it's installed — this closes that gap.
+    try:
+        from livewall.windows import pathenv
+
+        if not pathenv.is_on_path():
+            pathenv.add_to_path()
+            logger.info("First run: added the install directory to PATH")
+    except Exception as exc:
+        logger.warning("First-run PATH setup failed (non-fatal): %s", exc)

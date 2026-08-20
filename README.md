@@ -187,6 +187,10 @@ is broken:
 - **Settings**: open it via the gear icon or the tray icon's menu, and try
   toggling the automation options (random rotation, battery saver, restore
   wallpaper at login).
+- **From a terminal**: after the first launch, LiveWall adds itself to your
+  user `PATH` automatically — open a *new* PowerShell or cmd window and
+  `livewall status`/`livewall doctor` etc. should work directly, the same
+  hidden CLI the scheduled automations use under the hood.
 
 ### If something goes wrong
 
